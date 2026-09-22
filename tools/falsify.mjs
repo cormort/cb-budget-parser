@@ -70,7 +70,21 @@ const t=(name,cond)=>{ console.log(`${cond?'✓':'✗'} ${name}`); cond?pass++:f
   const v=api.verifyTable(P);
   t('從缺：清空 4107 → 計入無法驗，且不算通過', v.unable>0 && !v.bad.some(b=>b.code==='41'));
 }
-// 6. 未改動時全數通過（對照組）
+// 6. 表間：改壞資產負債預計表的事業投資 → 與資金轉投資明細表的勾稽要叫
+{
+  const ts=clone(); const B=find(ts,FILE_B,'資產負債預計表');
+  B.rows.find(x=>x.code==='130301').values['本年度預計數']='1';
+  const c=api.crossChecks(ts);
+  t('表間：改壞 130301 → 事業投資勾稽被抓到', c.some(x=>!x.ok&&x.rule==='事業投資'));
+}
+// 7. 表間：改壞資產負債預計表的資本 → 與資本增減明細表的勾稽要叫
+{
+  const ts=clone(); const B=find(ts,FILE_B,'資產負債預計表');
+  B.rows.find(x=>x.code==='31').values['本年度預計數']='1';
+  const c=api.crossChecks(ts);
+  t('表間：改壞 31 資本 → 資本勾稽被抓到', c.some(x=>!x.ok&&x.rule==='資本'));
+}
+// 8. 未改動時全數通過（對照組）
 {
   const ts=clone();
   const bad=ts.reduce((n,x)=>n+api.verifyTable(x).bad.length,0);

@@ -502,7 +502,9 @@ function crossChecks(tables) {
     // 取「某張表的某個科目（或合計列）的某個欄位」，連同可讀的標籤一起回傳
     const side = (t, key, col, extra) => {
         const r = t && (rowOf(t, key) || totalRow(t));
-        const v = r ? (toNum(r.values[col]) ?? toNum(r.values[t.cols[0]])) : null;
+        // 指名的那一欄不存在時，只有整張表就這麼一個資料欄才退回用它（例如營業外收入明細表
+        // 只有「合計」一欄）；否則寧可不算，免得默默比到別的年度的欄位。
+        const v = r ? (toNum(r.values[col]) ?? (t.cols.length === 1 ? toNum(r.values[t.cols[0]]) : null)) : null;
         return {
             table: t ? t.title : '（這份文件沒有這張表）',
             item: (r ? [r.code, r.name].filter(Boolean).join(' ') + '・' : '') + col + (extra || ''),
@@ -547,6 +549,17 @@ function crossChecks(tables) {
         const pay = side(B, '820101', '本年度預算數', '（取負號後）');
         if (pay.value != null) pay.value = -pay.value;
         cmp(file, '發放股利', div, pay);
+        // 明細表的期末餘額＝資產負債預計表對應科目的本年度預計數。這幾條是「業權基金－
+        // 作業基金附屬單位決算應具備書表格式」（附錄參–二）明文要求的勾稽，例如附表 B18
+        // 「本表期末投資金額應與平衡表長期股權投資科目期末餘額相符」。
+        const BS = T(file, '資產負債預計表');
+        cmp(file, '事業投資',
+            side(T(file, '資金轉投資及其盈虧明細表'), null, '投資金額投資淨額'), side(BS, '130301', '本年度預計數'));
+        cmp(file, '資本',
+            side(T(file, '資本增減與股額明細表'), null, '期末資本額實收資本金額'), side(BS, '31', '本年度預計數'));
+        // 盈餘的分配與保留：分配給中央政府的記在資產負債表的負債，留存事業機關的進保留盈餘
+        cmp(file, '盈餘保留', side(B, '8207', '本年度預算數'), side(BS, '3301', '比較增減數'));
+        cmp(file, '累積盈餘', side(B, '8102', '本年度預算數'), side(BS, '330201', '上年度預計數'));
     }
     return out;
 }
