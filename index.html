@@ -145,6 +145,8 @@ function decoderFor(strs) {
 
 // ===== 版面解析 =====
 const isNum = s => /^[（(]?-?[\d,]+(\.\d+)?[%％）)]?$/.test(s) && /\d/.test(s);
+// 列標題欄，不能拿來當數字欄的欄名
+const LABEL = /^(名稱|編號|科目|項目|說明|備註|摘要|科目及營運項目)$/;
 const isCode = s => /^\d{2,10}[A-Z]?$/.test(s);
 const tidy = s => s.replace(/[\s　]+/g, '');
 const NOISE = /^附|^中央銀行|中華民國|^華民國|單位[:：]|^[\d.\-:,]+$|^[!ġ中附]$/;
@@ -192,24 +194,71 @@ async function pageLines(doc, p) {
     return { page: p, lines: [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, c]) => ({ y, cells: c.sort((a, b) => a.x - b.x) })) };
 }
 
+const hasCodeHead = pg => pg.lines.some(l => l.cells.some(c => tidy(c.s) === '編號'));
+const isNoteLayout = pg => pg.lines.some(l => l.cells.some(c => tidy(c.s) === '科目') && l.cells.some(c => /^說/.test(tidy(c.s))));
+const dataYs = pg => pg.lines.filter(l => l.cells.some(c => isCode(c.s)) || l.cells.filter(c => isNum(c.s)).length >= 2).map(l => l.y);
+// 右頁若自己就有一個完整的已知表名，那是另一張表，不是對開的右半
+const isOwnTable = pg => pg.lines.slice(0, 5).some(l => {
+    const t = tidy(l.cells.map(c => c.s).join(''));
+    if (t.length < 6) return false;
+    const m = matchTitle(t);
+    return KNOWN_TABLES.includes(m) && t.length >= m.length * 0.7;
+});
+
+// 大表印成左右對開兩頁：右頁沒有「編號」欄，但資料列的 y 與左頁幾乎完全對齊。
+// 實測 42 組相鄰頁，真的是對開的 y 命中率 ≥57%，不是的 ≤11%，門檻取 40%。
+function isSpread(pg, nextPg) {
+    if (!nextPg || hasCodeHead(nextPg) || isNoteLayout(nextPg) || isOwnTable(nextPg)) return false;
+    const a = dataYs(pg); if (a.length < 3) return false;
+    const b = dataYs(nextPg);
+    return a.filter(y => b.some(y2 => Math.abs(y2 - y) <= 2)).length / a.length >= 0.4;
+}
+
+// 右頁併進左頁：x 加一個大於頁寬的位移，兩頁就落在同一個座標系，後面的邏輯不用改
+const SPREAD_OFFSET = 700;
+function mergeSpread(pg, nextPg) {
+    const lines = pg.lines.map(l => ({ y: l.y, cells: [...l.cells] }));
+    for (const l of nextPg.lines) {
+        const shifted = l.cells.map(c => ({ ...c, x: c.x + SPREAD_OFFSET }));
+        const t = lines.find(x => Math.abs(x.y - l.y) <= 2);
+        if (t) t.cells.push(...shifted); else lines.push({ y: l.y, cells: shifted });
+    }
+    lines.forEach(l => l.cells.sort((a, b) => a.x - b.x));
+    return { page: pg.page, lines: lines.sort((a, b) => b.y - a.y) };
+}
+
 // 以含「編號」的表頭列切開：其上是表名與欄位標題，其下是資料列
-function parsePage(pg, nextPg) {
+function parsePage(pgIn, nextPg) {
+    const spread = isSpread(pgIn, nextPg);
+    const pg = spread ? mergeSpread(pgIn, nextPg) : pgIn;
     const L = pg.lines;
     const h = L.map((l, i) => l.cells.some(c => tidy(c.s) === '編號') ? i : -1).filter(i => i >= 0).pop();
     if (h === undefined) return null;
-    const head = L.slice(0, h + 1);
     const idx = L.map((l, i) => i > h && l.cells.some(c => isCode(c.s)) && l.cells.some(c => !isCode(c.s) && !isNum(c.s) && tidy(c.s)) ? i : -1).filter(i => i >= 0);
     if (idx.length < 2) return null;
     const first = idx[0];
-    const hCells = head.flatMap(l => l.cells.filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)))
-        .map(c => ({ cx: c.x, cw: c.w, s: tidy(c.s), y: l.y })));
-    const codeHead = hCells.find(c => c.s === '編號');
+    // 表頭區＝第一列資料以上（不是「編號」列以上——對開的右頁常有更下面的補充標題列）
+    const head = L.slice(0, first);
+    const codeHead = head.flatMap(l => l.cells).filter(c => tidy(c.s) === '編號').map(c => ({ cx: c.x, cw: c.w }))[0];
     // 跨頁表的表名會被拆到下一頁，合併兩頁頁首後再比對
     const tl = ls => ls.map(l => tidy(l.cells.map(c => c.s).join(''))).filter(s => s && !NOISE.test(s));
     const rawTitle = tl(head).filter(s => /表/.test(s)).join('')
         || tl(head).concat(nextPg ? tl(nextPg.lines.slice(0, 4)) : []).join('');
     const title = matchTitle(rawTitle);
+    // 表頭列＝表頭區扣掉頁眉與表名列。不能改用「含名稱／編號的那一列」當起點——表頭文字
+    // 常是同一個 x 跨多列換行（「正式員」／「額薪資」），名稱列往往不是最上面那一列。
     const titleChars = new Set(title);
+    const headRows = head
+        .filter(l => {
+            const t = tidy(l.cells.map(c => c.s).join(''));
+            // 表名列判定放寬到八成：表名偶爾夾雜年度數字等不在比對結果裡的字
+            const inTitle = [...t].filter(c => titleChars.has(c)).length;
+            return t && !NOISE.test(t) && inTitle / t.length < 0.8;
+        })
+        // 單一中文字的表頭格幾乎都是被拆開的列標題殘字（「科　目」的「目」），不當欄名
+        .map(l => l.cells.filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)) && !/^[\u4e00-\u9fff]$/.test(tidy(c.s)))
+            .map(c => ({ cx: c.x, cw: c.w, s: tidy(c.s) })))
+        .filter(r => r.length);
 
     const rows = idx.map(i => {
         const cells = L[i].cells;
@@ -232,18 +281,32 @@ function parsePage(pg, nextPg) {
         if (lt && !NOISE.test(lt)) prev.name += lt;
         if (rt && !NOISE.test(rt)) prev.note += rt;
     }
-    // 數字欄位靠右對齊：以右緣分群成欄，再取中心最近、且不是表名殘字的表頭串接成欄名
+    // 數字欄位靠右對齊：以右緣分群成欄
     const edges = [...new Set(rows.flatMap(r => r.nums.map(n => Math.round(n.r))))].sort((a, b) => a - b);
     const buckets = [];
     for (const e of edges) { const b = buckets.at(-1); if (b && e - b.at(-1) <= 8) b.push(e); else buckets.push([e]); }
+    // 欄名：逐「表頭列」取中心最近的那一格，再由上而下串接。群組標題（如「新臺幣部分」）
+    // 是置中的，寬度常比它涵蓋的欄還窄，所以不能用區間包含判斷，只能比距離。
     const cols = buckets.map((b, i) => {
-        const center = b.at(-1) - 18;
-        const hs = hCells.filter(x => Math.abs(x.cx + x.cw / 2 - center) < 34 && ![...x.s].every(c => titleChars.has(c)))
-            .sort((x, y) => y.y - x.y);
-        return { lo: b[0] - 4, hi: b.at(-1) + 4, name: hs.map(x => x.s).join('') || ('欄' + (i + 1)) };
+        const center = b.at(-1) - 18, parts = [];
+        for (const row of headRows) {
+            const cand = row.filter(x => !LABEL.test(x.s));
+            if (!cand.length) continue;
+            const best = cand.reduce((p, q) => Math.abs(q.cx + q.cw / 2 - center) < Math.abs(p.cx + p.cw / 2 - center) ? q : p);
+            if (Math.abs(best.cx + best.cw / 2 - center) > 90) continue;
+            if (!parts.some(x => x.includes(best.s) || best.s.includes(x))) parts.push(best.s);
+        }
+        return { lo: b[0] - 4, hi: b.at(-1) + 4, name: parts.join('') || ('欄' + (i + 1)) };
     });
+    // 欄名必須唯一：values 以欄名為 key，同名會互相覆蓋掉資料
+    const used = new Map();
+    for (const c of cols) {
+        const n = (used.get(c.name) || 0) + 1;
+        used.set(c.name, n);
+        if (n > 1) c.name += '(' + n + ')';
+    }
     return {
-        page: pg.page, title, cols: cols.map(c => c.name),
+        page: pg.page, title, spread, cols: cols.map(c => c.name),
         rows: rows.map(r => {
             const values = {};
             for (const n of r.nums) { const c = cols.find(c => n.r >= c.lo && n.r <= c.hi); if (c) values[c.name] = n.s; }
@@ -361,9 +424,11 @@ async function parseCbPdf() {
                 if (p % 10 === 0) show('statusMessage', `解析 ${file.name}：第 ${p}/${doc.numPages} 頁…`);
                 pages.push(await pageLines(doc, p));
             }
+            let skip = -1;
             for (let i = 0; i < pages.length; i++) {
+                if (i === skip) continue;   // 已併進上一頁的對開右半
                 const t = parsePage(pages[i], pages[i + 1]);
-                if (t) { tables.push({ file: file.name, ...t }); continue; }
+                if (t) { if (t.spread) skip = i + 1; tables.push({ file: file.name, ...t }); continue; }
                 const n = parseNotePage(pages[i], matchTitle(headText(pages[i]), NOTE_TITLES));
                 if (n) notes.push({ file: file.name, ...n });
             }
@@ -388,7 +453,7 @@ function render() {
             const key = t.file + '｜' + t.title;
             if (!m.has(key)) m.set(key, { file: t.file, title: t.title, pages: [], cols: [], rows: [] });
             const g = m.get(key);
-            g.pages.push(t.page);
+            g.pages.push(t.spread ? `${t.page}-${t.page + 1}` : t.page);
             for (const c of (t.cols || [])) if (!g.cols.includes(c)) g.cols.push(c);
             g.rows.push(...t.rows);
         }
