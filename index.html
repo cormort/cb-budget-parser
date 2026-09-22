@@ -136,7 +136,9 @@ const decMing = s => post(s.replace(/[Ā-￿]/g, ch => {
 const decKai = s => post(s.replace(/[Ā-￿]/g, ch => big5(ch.charCodeAt(0)) ?? ch));
 const legible = s => [...s].filter(c => { const n = c.codePointAt(0); return n < 0x100 || (n >= 0x4E00 && n <= 0x9FFF) || (n >= 0x3000 && n <= 0x303F) || (n >= 0xFF00 && n <= 0xFFEF); }).length;
 // 亂碼字：楷體落在拉丁擴充／希臘／西里爾等區，明體落在 CJK 擴充 A 區。中文標點不算。
-const GARBLED = /[\u0100-\u2FFF\u3400-\u4DBF]/;
+const GARBLED = /[\u0100-\u2FFF\u3400-\u4DBF炴炷炸炻炼烉烊灼★“”㎜▼▽﹋﹌‵ʇ]/;
+// 後半那串是實測會出現、但剛好落在正常中文區的亂碼（％會變成「炴」、：變成「烉」…）。
+// 這些字在央行預算書裡不會是正文，列進來才不會讓整個字型被誤判成不必解碼。
 // 逐「字型」決定要不要解碼、用哪個解碼器。不能逐 item 判斷：有些單字的亂碼剛好落在
 // 正常中文區（例：「說」會變成「婒」），逐 item 看就會被當成正常字放過。同一字型只要
 // 有任何一個 item 帶亂碼字，整個字型就一起解。
@@ -189,6 +191,54 @@ const SCHEMAS = {
     '營業外費用明細表': 費用明細,
     '資產負債預計表': ['前年度實際數', '本年度預計數', '上年度預計數', '比較增減數'],
     '5年來主要營運項目量值明細表': ['營運量', '平均利(費)率％', '營運值'],
+    // ── 以下為跨頁對開的大表，左右兩頁合起來算 ──
+    '固定資產建設改良擴充明細表': [
+        ['不動產廠房及設備土地', '土地'], ['不動產廠房及設備土地改良物', '土地改良物'],
+        ['不動產廠房及設備房屋及建築', '房屋及建築'], ['不動產廠房及設備機械及設備', '機械及設備'],
+        ['不動產廠房及設備交通及運輸設備', '交通及運輸'], ['不動產廠房及設備什項設備', '什項設備'],
+        ['不動產廠房及設備核能燃料', '核能燃料'], ['不動產廠房及設備生產性植物', '生產性植物'],
+        ['租賃權益改良', '租賃權益'], ['小計', '小計'], ['投資性不動產', '投資性'], ['合計', '合計']],
+    '固定資產建設改良擴充資金來源明細表': [
+        ['自有資金營運資金', '營運'], ['自有資金出售不適用資產', '出售不適'], ['自有資金增資', '增資'],
+        ['自有資金其他', '其他'], ['自有資金小計金額', '金額'], ['自有資金小計％', '％'],
+        ['外借資金國內借款銀行借款', '銀行借款'], ['外借資金國內借款公司債', '公司債'],
+        ['外借資金國內借款其他', '其他'], ['外借資金國外借款', '國外借款'],
+        ['外借資金小計金額', '金額'], ['外借資金小計％', '％'], ['合計金額', '金額'], ['合計％', '％']],
+    '固定資產建設改良擴充計畫預期進度明細表': [
+        ['全部資金來源投資總額', '投資總額'], ['全部資金來源自有資金營運資金', '營運資金'],
+        ['全部資金來源自有資金出售不適用資產', '出售不適'], ['全部資金來源自有資金增資', '增資'],
+        ['全部資金來源自有資金其他', '其他'], ['全部資金來源外借資金', '外借資金'],
+        ['計畫目標能量', '目標能量'], ['計畫資金成本率％', '成本率'], ['計畫內部報酬率％', '報酬率'],
+        ['計畫收回年限', '年限'],
+        ['預算數本年度金額', '金額'], ['預算數本年度占全部計畫％', '占全部'],
+        ['預算數截至本年度累計金額', '金額'], ['預算數截至本年度累計占全部計畫％', '占全部']],
+    '資產報廢明細表': [
+        ['成本或重估價值', '重估價值'], ['帳面價值已提折舊額', '已提折舊額'],
+        ['帳面價值減損調整數', '減損調整數'], ['帳面價值淨額', '淨額'],
+        ['殘餘價值', '殘餘價值'], ['報廢損失', '報廢損失']],
+    '資金轉投資及其盈虧明細表': [
+        ['轉投資事業年終實收資本總額', '年終實收'], ['轉投資事業發行股數', '發行股數'],
+        ['投資金額以前年度已投資', '以前年度'], ['投資金額本年度增減投資', '本年度增'], ['投資金額投資淨額', '投資淨額'],
+        ['持股比率年終預計持有股數', '年終預計'], ['持股比率占發行股數％', '占發行股'],
+        ['現金股利或事業投資利益本年度預算每股(元)', '每股(元)'],
+        ['現金股利或事業投資利益本年度預算總額', '總額'],
+        ['現金股利或事業投資利益上年度預算總額', '總額'],
+        ['現金股利或事業投資利益前年度決算總額', '總額']],
+    '員工人數彙計表': [
+        ['上年度預計數國內部分', '國內部分'], ['上年度預計數國外部分', '國外部分'],
+        ['本年度增減數國內部分', '國內部分'], ['本年度增減數國外部分', '國外部分'],
+        ['本年度預計數國內部分', '國內部分'], ['本年度預計數國外部分', '國外部分']],
+    '增購及汰舊換新管理用公務車輛明細表': [
+        ['增購部分數量', '數量'], ['增購部分金額', '金額'],
+        ['汰舊換新部分數量', '數量'], ['汰舊換新部分金額', '金額'],
+        ['合計數量', '數量'], ['合計金額', '金額']],
+    '用人費用彙計表': [
+        ['正式員額薪資', '正式員'], ['臨時人員薪資', '臨時人'], ['加班費', '加班費'], ['津貼', '津貼'],
+        ['獎金績效獎金', '績效'], ['獎金考核獎金', '考核'], ['獎金其他獎金', '其他'],
+        ['退休、卹償金退休及離職金', '退休及'], ['退休、卹償金卹償金', '卹償金'], ['退休、卹償金資遣費', '資遣費'],
+        ['福利費分擔保險費', '分擔'], ['福利費病醫藥費', '醫藥費'], ['福利費提撥福利金', '提撥'],
+        ['福利費體育活動費', '體育'], ['福利費其他福利費', '其他'],
+        ['提繳工資墊償費用', '工資墊'], ['合計', '合計']],
 };
 
 // ===== 合計驗算 =====
@@ -230,8 +280,12 @@ function checkTotals(table) {
 }
 
 // ===== 版面解析 =====
+// 表尾的「註：…」等註解列會夾雜年度數字，被誤認成科目列。
+// 央行的科目名稱不會用全形冒號或書名號，以此濾掉。
+const FOOTNOTE = /^註|[《》：]/;
 const isNum = s => /^[（(]?-?[\d,]+(\.\d+)?[%％）)]?$/.test(s) && /\d/.test(s);
-const isCode = s => /^\d{2,10}[A-Z]?$/.test(s);
+// 深層科目編號最長 11 碼（97452020131）
+const isCode = s => /^\d{2,12}[A-Z]?$/.test(s);
 const tidy = s => s.replace(/[\s　]+/g, '');
 const NOISE = /^附|^中央|^中華民國|^華民國|單位[:：]|^[\d.\-:,]+$|^[!ġ中附]$/;
 // 列標題欄，不能拿來當數字欄的欄名
@@ -289,6 +343,52 @@ function mergeSpread(pg, nextPg) {
     return { page: pg.page, lines: lines.sort((a, b) => b.y - a.y) };
 }
 
+// 相鄰欄的表頭常被畫成同一格，用空白隔開（「土地改良物 房屋及建築 機械及設備」）。
+// 但「不 動 產 、 廠 房」這種是同一個詞被拉開字距，不能拆——差別在於拆出來的每一段
+// 是不是都有兩個字以上。拆開後的 x 依字數比例分配。
+function splitHeadCell(c) {
+    const t = c.s.trim();
+    const parts = t.split(/\s+/).filter(Boolean);
+    if (parts.length < 2 || parts.some(x => x.length < 2)) return [{ cx: c.x, cw: c.w, s: tidy(c.s) }];
+    const unit = c.w / t.length;
+    let at = c.x;
+    return parts.map(x => {
+        const seg = { cx: at, cw: x.length * unit, s: x };
+        at += (x.length + 1) * unit;
+        return seg;
+    });
+}
+
+// 直排的表頭會把一個詞拆到上下兩列的同一個 x（「數」在上、「量」在下），併成一格。
+function mergeStacked(rows) {
+    const single = c => /^[\u4e00-\u9fff]$/.test(c.s);
+    for (let i = 0; i < rows.length; i++)
+        for (const c of rows[i]) {
+            if (!single(c)) continue;
+            for (let j = i + 1; j < rows.length; j++) {
+                const k = rows[j].findIndex(d => single(d) && Math.abs(d.cx - c.cx) < 5);
+                if (k < 0) continue;
+                c.s += rows[j][k].s;
+                rows[j].splice(k, 1);
+            }
+        }
+}
+
+// 有些年度的表頭被拆成一個字一格（「轉 投 資 事 業」），要先併回詞才定位得到。
+// 門檻取保守的 1.5 倍字寬：放寬到 4 倍雖然能接回「總　額」這種拉開字距的詞，卻會把
+// 相鄰兩欄的「位」「金」黏成一格。拉開字距的詞改由 mergeForHeads 依規格定向處理。
+function mergeSingles(cells) {
+    const out = [];
+    const single = x => /^[\u4e00-\u9fff％]$/.test(x.s.trim());
+    for (const c of cells) {
+        const prev = out[out.length - 1];
+        if (prev && single(prev) && single(c) && c.x - (prev.x + prev.w) <= 1.5 * c.w) {
+            out[out.length - 1] = { x: prev.x, w: c.x + c.w - prev.x, s: prev.s.trim() + c.s.trim() };
+        } else out.push({ x: c.x, w: c.w, s: c.s });
+    }
+    return out;
+}
+
 // 一頁 → 原始列資料。欄位不在這裡算，交給 buildTable 整張表一起算。
 function parsePage(pgIn, nextPg) {
     const spread = isSpread(pgIn, nextPg);
@@ -330,13 +430,20 @@ function parsePage(pgIn, nextPg) {
             return t && !NOISE.test(t) && [...t].filter(c => titleChars.has(c)).length / t.length < 0.8;
         })
         // 單一中文字的表頭格幾乎都是被拆開的列標題殘字（「科　目」的「目」），不當欄名
-        .map(l => l.cells.filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)) && !/^[一-鿿]$/.test(tidy(c.s)))
-            .map(c => ({ cx: c.x, cw: c.w, s: tidy(c.s) })))
+        .map(l => mergeSingles(l.cells).filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)))
+            .flatMap(splitHeadCell))
         .filter(r => r.length);
+    mergeStacked(headRows);
 
     const rows = idx.map(i => {
         const cells = L[i].cells;
-        const code = cells.filter(c => isCode(c.s)).sort((a, b) => Math.abs(a.x - codeHead.cx) - Math.abs(b.x - codeHead.cx))[0];
+        // 深層科目的編號很長（97452020131），與同列的數值都落在編號欄附近，用「最接近」
+        // 會挑到數值。改成先取與編號欄有重疊的，再取最長的那個。
+        const nums = cells.filter(c => isCode(c.s));
+        const lo = codeHead.cx - 12, hi = codeHead.cx + codeHead.cw + 12;
+        const over = nums.filter(c => c.x + c.w >= lo && c.x <= hi);
+        const code = (over.length ? over.sort((a, b) => b.s.length - a.s.length)
+            : nums.slice().sort((a, b) => Math.abs(a.x - codeHead.cx) - Math.abs(b.x - codeHead.cx)))[0];
         const left = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x < codeHead.cx);
         const right = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x > codeHead.cx + codeHead.cw);
         return {
@@ -355,8 +462,25 @@ function parsePage(pgIn, nextPg) {
         if (lt && !NOISE.test(lt)) prev.name += lt;
         if (rt && !NOISE.test(rt)) prev.note += rt;
     }
-    return { page: pg.page, spread, title, headRows, rows };
+    return { page: pg.page, spread, title, headRows, rows: rows.filter(r => !FOOTNOTE.test(r.name)) };
 }
+
+// 規格要找的表頭字樣若被拆成連續單字（「總」「額」，中間還刻意拉開字距），定向併回來。
+// 只併「併起來剛好等於要找的字樣」的組合，不會誤黏相鄰欄。
+function mergeForHeads(rows, heads) {
+    const want = new Set(heads);
+    for (const row of rows)
+        for (let i = 0; i < row.length; i++)
+            for (let n = 2; n <= 4 && i + n <= row.length; n++) {
+                const seg = row.slice(i, i + n);
+                if (!seg.every(c => c.s.length === 1)) break;
+                const merged = seg.map(c => c.s).join('');
+                if (!want.has(merged)) continue;
+                row.splice(i, n, { cx: seg[0].cx, cw: seg[n - 1].cx + seg[n - 1].cw - seg[0].cx, s: merged });
+                break;
+            }
+}
+const dropStrays = rows => rows.map(r => r.filter(c => !/^[\u4e00-\u9fff]$/.test(c.s))).filter(r => r.length);
 
 // 依表頭字樣在表頭上定位各欄的 x 中心（同樣字樣重複出現時，照左到右依序配對）
 function locateCols(headRows, schema) {
@@ -370,6 +494,28 @@ function locateCols(headRows, schema) {
         k = i + 1;
     }
     return out;
+}
+
+// 把由左到右的資料欄群，保序配到由左到右的規格欄上（某些欄整欄沒資料時會被跳過）。
+// 不能各自取最近的那一欄——欄距只有 50pt 左右，取最近很容易整排錯開一格。
+function assignInOrder(centers, cols) {
+    const m = centers.length, n = cols.length;
+    if (m > n) return null;
+    const INF = Infinity;
+    const f = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(INF));
+    for (let j = 0; j <= n; j++) f[m][j] = 0;
+    for (let i = m - 1; i >= 0; i--)
+        for (let j = n - 1; j >= 0; j--)
+            f[i][j] = Math.min(f[i][j + 1], Math.abs(centers[i] - cols[j].cx) + f[i + 1][j + 1]);
+    if (!Number.isFinite(f[0][0])) return null;
+    const out = [];
+    for (let i = 0, j = 0; i < m; j++) {
+        if (f[i][j] === f[i][j + 1]) continue;                 // 這一欄沒有資料，跳過
+        // 欄距約 50pt，容忍度取 40pt：再放寬就可能讓整排默默錯開一格
+        if (Math.abs(centers[i] - cols[j].cx) > 40) return null;
+        out.push(cols[j].name); i++;
+    }
+    return out.length === m ? out : null;
 }
 
 // ── 整張表（含所有頁與對開右半）一起算欄位 ──
@@ -387,15 +533,13 @@ function buildTable(parts, schema) {
     let names = null;
     // (1) 規格有記表頭字樣 → 在表頭上定位，再把每群配到最近的那一欄。
     //     整欄沒資料時（金融保險成本沒有「固定」）其他欄才不會跟著錯位。
-    const located = schema && locateCols(headRows, schema);
-    if (located) {
-        const got = buckets.map(b => {
-            const c = b.at(-1) - 18;
-            const best = located.reduce((p, q) => Math.abs(q.cx - c) < Math.abs(p.cx - c) ? q : p);
-            return Math.abs(best.cx - c) <= 60 ? best.name : null;
-        });
-        if (got.every(Boolean) && new Set(got).size === got.length) names = got;
+    let located = null;
+    if (schema && schema.every(c => Array.isArray(c))) {
+        const copy = headRows.map(r => r.map(c => ({ ...c })));
+        mergeForHeads(copy, schema.map(c => c[1]));
+        located = locateCols(dropStrays(copy), schema);
     }
+    if (located) names = assignInOrder(buckets.map(b => b.at(-1) - 18), located);
     // (2) 退而求其次：欄數對得上就照順序套規格名。多出來的只允許丟「值極少」的雜訊群
     //     （說明裡的數字、被誤認的編號）；丟不掉就整個放棄套規格，欄位一個都不能少。
     if (!names && schema) {
@@ -412,7 +556,7 @@ function buildTable(parts, schema) {
     const cols = buckets.map((b, i) => {
         if (names) return { ...span(b), name: names[i] };
         const center = b.at(-1) - 18, frags = [];
-        for (const row of headRows) {
+        for (const row of dropStrays(headRows)) {
             const cand = row.filter(x => !LABEL.test(x.s));
             if (!cand.length) continue;
             const best = cand.reduce((p, q) => Math.abs(q.cx + q.cw / 2 - center) < Math.abs(p.cx + p.cw / 2 - center) ? q : p);
