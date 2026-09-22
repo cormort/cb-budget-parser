@@ -156,7 +156,7 @@ function decoderFor(strs) {
 const SECTIONS = [
     { key: '丙', label: '丙、預算主要表', tables: ['損益預計表', '盈虧撥補預計表', '現金流量預計表'] },
     { key: '丁1', label: '丁、預算明細表　壹、損益明細科目', tables: ['金融保險收入明細表', '營業外收入明細表', '金融保險成本明細表', '業務費用明細表', '管理費用明細表', '營業外費用明細表'] },
-    { key: '丁2', label: '丁、預算明細表　貳、現金流量明細科目', tables: ['固定資產建設改良擴充明細表', '固定資產建設改良擴充資金來源明細表', '固定資產建設改良擴充計畫預期進度明細表', '資產折舊明細表', '資產報廢明細表', '資金轉投資及其盈虧明細表', '資本增減與股額明細表'] },
+    { key: '丁2', label: '丁、預算明細表　貳、現金流量明細科目', tables: ['固定資產建設改良擴充明細表', '固定資產建設改良擴充資金來源明細表', '固定資產建設改良擴充計畫預期進度明細表', '資產折舊明細表', '資產報廢明細表', '資產變賣明細表', '資金轉投資及其盈虧明細表', '資本增減與股額明細表'] },
     { key: '戊', label: '戊、預算參考表', tables: ['資產負債預計表', '員工人數彙計表', '用人費用彙計表', '各項費用彙計表', '增購及汰舊換新管理用公務車輛明細表', '5年來主要營運項目量值明細表', '會費、補助及捐助與分攤費用彙計表', '會費、捐助與分攤費用彙計表', '媒體政策及業務宣導費彙計表'] },
     { key: '己', label: '己、附錄', tables: ['一般建築及設備計畫之分年性項目明細表'] },
 ];
@@ -192,12 +192,16 @@ const SCHEMAS = {
     '資產負債預計表': ['前年度實際數', '本年度預計數', '上年度預計數', '比較增減數'],
     '5年來主要營運項目量值明細表': ['營運量', '平均利(費)率％', '營運值'],
     // ── 以下為跨頁對開的大表，左右兩頁合起來算 ──
+    // 「不動產、廠房及設備」是最上層科目，一路涵蓋到「租賃權益改良」，「小計」就是它的小計
+    //（PDF 註腳：本表《不動產、廠房及設備》之建設、改良、擴充合計 790,831 千元＝小計）。
+    // 「投資性不動產」是另一個科目，與小計相加才是合計。
     '固定資產建設改良擴充明細表': [
-        ['不動產廠房及設備土地', '土地'], ['不動產廠房及設備土地改良物', '土地改良物'],
-        ['不動產廠房及設備房屋及建築', '房屋及建築'], ['不動產廠房及設備機械及設備', '機械及設備'],
-        ['不動產廠房及設備交通及運輸設備', '交通及運輸'], ['不動產廠房及設備什項設備', '什項設備'],
-        ['不動產廠房及設備核能燃料', '核能燃料'], ['不動產廠房及設備生產性植物', '生產性植物'],
-        ['租賃權益改良', '租賃權益'], ['小計', '小計'], ['投資性不動產', '投資性'], ['合計', '合計']],
+        ['不動產、廠房及設備土地', '土地'], ['不動產、廠房及設備土地改良物', '土地改良物'],
+        ['不動產、廠房及設備房屋及建築', '房屋及建築'], ['不動產、廠房及設備機械及設備', '機械及設備'],
+        ['不動產、廠房及設備交通及運輸設備', '交通及運輸'], ['不動產、廠房及設備什項設備', '什項設備'],
+        ['不動產、廠房及設備核能燃料', '核能燃料'], ['不動產、廠房及設備生產性植物', '生產性植物'],
+        ['不動產、廠房及設備租賃權益改良', '租賃權益'], ['不動產、廠房及設備小計', '小計'],
+        ['投資性不動產', '投資性'], ['合計', '合計']],
     '固定資產建設改良擴充資金來源明細表': [
         ['自有資金營運資金', '營運'], ['自有資金出售不適用資產', '出售不適'], ['自有資金增資', '增資'],
         ['自有資金其他', '其他'], ['自有資金小計金額', '金額'], ['自有資金小計％', '％'],
@@ -212,6 +216,17 @@ const SCHEMAS = {
         ['計畫收回年限', '年限'],
         ['預算數本年度金額', '金額'], ['預算數本年度占全部計畫％', '占全部'],
         ['預算數截至本年度累計金額', '金額'], ['預算數截至本年度累計占全部計畫％', '占全部']],
+    '資本增減與股額明細表': [
+        ['期初資本額實收資本', '實收'], ['期初資本額預收資本', '預收'],
+        ['本年度增減額現金', '現金'], ['本年度增減額轉帳', '轉帳'],
+        ['期末資本額實收資本股數', '股數'], ['期末資本額實收資本每股金額(元)', '每股金'],
+        ['期末資本額實收資本金額', '金額'], ['期末資本額實收資本％', '％'],
+        ['期末資本額預收資本', '預收']],
+    '資產變賣明細表': [
+        ['成本或重估價值', '重估價值'], ['帳面價值已提折舊額', '折舊額'],
+        ['帳面價值減損調整數', '調整數'], ['帳面價值淨額', '淨額'],
+        ['變賣收入總收入', '總收入'], ['變賣收入處理費用', '處理費用'],
+        ['變賣收入淨收入', '淨收入'], ['變賣盈餘或虧損', '虧損']],
     '資產報廢明細表': [
         ['成本或重估價值', '重估價值'], ['帳面價值已提折舊額', '已提折舊額'],
         ['帳面價值減損調整數', '減損調整數'], ['帳面價值淨額', '淨額'],
@@ -396,12 +411,17 @@ function parsePage(pgIn, nextPg) {
     const L = pg.lines;
     const h = L.map((l, i) => l.cells.some(c => tidy(c.s) === '編號') ? i : -1).filter(i => i >= 0).pop();
     if (h === undefined) return null;
-    const idx = L.map((l, i) => i > h && l.cells.some(c => isCode(c.s)) && l.cells.some(c => !isCode(c.s) && !isNum(c.s) && tidy(c.s)) ? i : -1).filter(i => i >= 0);
+    const codeHead = L.slice(0, h + 1).flatMap(l => l.cells).filter(c => tidy(c.s) === '編號').map(c => ({ cx: c.x, cw: c.w }))[0];
+    // 編號＝落在「編號」欄範圍內的數字（同列最長的那個；深層科目編號有 11 碼）。
+    // 表尾的「合計」列沒有編號，不能把它的金額誤當編號吃掉。
+    const codeOf = cells => cells.filter(c => isCode(c.s)
+        && c.x + c.w >= codeHead.cx - 12 && c.x <= codeHead.cx + codeHead.cw + 12)
+        .sort((a, b) => b.s.length - a.s.length)[0] || null;
+    const hasName = l => l.cells.some(c => !isNum(c.s) && tidy(c.s) && c.x < codeHead.cx);
+    const idx = L.map((l, i) => i > h && hasName(l) && (codeOf(l.cells) || l.cells.filter(c => isNum(c.s)).length >= 2) ? i : -1).filter(i => i >= 0);
     if (idx.length < 2) return null;
     const first = idx[0];
-    // 表頭區＝第一列資料以上（不是「編號」列以上——對開右頁常有更下面的補充標題列）
     const head = L.slice(0, first);
-    const codeHead = head.flatMap(l => l.cells).filter(c => tidy(c.s) === '編號').map(c => ({ cx: c.x, cw: c.w }))[0];
     // 「說明」欄裡常夾金額，那不是資料欄。表頭都置中，所以「說明」欄左界取它與同列左鄰
     // 表頭的中心中點；數字的右緣越過這條線就當成說明文字裡的數字。
     const noteBound = (() => {
@@ -437,19 +457,16 @@ function parsePage(pgIn, nextPg) {
 
     const rows = idx.map(i => {
         const cells = L[i].cells;
-        // 深層科目的編號很長（97452020131），與同列的數值都落在編號欄附近，用「最接近」
-        // 會挑到數值。改成先取與編號欄有重疊的，再取最長的那個。
-        const nums = cells.filter(c => isCode(c.s));
-        const lo = codeHead.cx - 12, hi = codeHead.cx + codeHead.cw + 12;
-        const over = nums.filter(c => c.x + c.w >= lo && c.x <= hi);
-        const code = (over.length ? over.sort((a, b) => b.s.length - a.s.length)
-            : nums.slice().sort((a, b) => Math.abs(a.x - codeHead.cx) - Math.abs(b.x - codeHead.cx)))[0];
+        const code = codeOf(cells);
         const left = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x < codeHead.cx);
         const right = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x > codeHead.cx + codeHead.cw);
         return {
-            y: L[i].y, code: code.s, name: joinCells(left), note: joinCells(right),
+            y: L[i].y, code: code ? code.s : '', name: joinCells(left), note: joinCells(right),
             indent: left.length ? Math.round(Math.max(...left.map(c => c.x))) : 0,
-            nums: cells.filter(c => c !== code && isData(c)).map(c => ({ r: c.x + c.w, s: c.s })),
+            // 沒有編號的列若還有數字落在「編號」欄左邊，那是註腳被拆進來的序號，不是資料。
+            //（有編號的列不能這樣砍：資產負債預計表左右各一組欄，取到的是右邊那個「編號」。）
+            nums: cells.filter(c => c !== code && isData(c) && (code || c.x + c.w > codeHead.cx + codeHead.cw))
+                .map(c => ({ r: c.x + c.w, s: c.s })),
         };
     });
     // 只有文字、沒有編號與數字的列 = 上一列名稱（或說明）的續行
@@ -462,7 +479,12 @@ function parsePage(pgIn, nextPg) {
         if (lt && !NOISE.test(lt)) prev.name += lt;
         if (rt && !NOISE.test(rt)) prev.note += rt;
     }
-    return { page: pg.page, spread, title, headRows, rows: rows.filter(r => !FOOTNOTE.test(r.name)) };
+    // 沒有編號的列只可能是表尾的合計／總計或無編號的科目名，都很短；
+    // 註腳與被擠進來的說明文字一律較長，用長度砍掉（有編號的列不受影響）。
+    const keep = r => !FOOTNOTE.test(r.name) && (r.code || tidy(r.name).length <= 12);
+    const kept = rows.filter(keep);
+    if (kept.length < 2) return null;
+    return { page: pg.page, spread, title, headRows, rows: kept };
 }
 
 // 規格要找的表頭字樣若被拆成連續單字（「總」「額」，中間還刻意拉開字距），定向併回來。
@@ -488,7 +510,8 @@ function locateCols(headRows, schema) {
     const cells = headRows.flat().slice().sort((a, b) => a.cx - b.cx);
     const out = []; let k = 0;
     for (const [name, headText] of schema) {
-        const i = cells.findIndex((c, idx) => idx >= k && c.s === headText);
+        // 表頭字樣偶爾會黏到隔壁欄的一個字（「％」變成「％中」），容許尾巴多一個字
+        const i = cells.findIndex((c, idx) => idx >= k && c.s.startsWith(headText) && c.s.length <= headText.length + 1);
         if (i < 0) return null;
         out.push({ name, cx: cells[i].cx + cells[i].cw / 2 });
         k = i + 1;
