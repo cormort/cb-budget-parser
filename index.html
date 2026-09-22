@@ -59,6 +59,10 @@
     details.tbl > summary { cursor: pointer; font-weight: 600; }
     details.tbl > summary .meta { color: var(--fg-500); font-weight: 400; font-size: 13px; }
     .scroll { overflow: auto; }
+    .warn { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--warning-700); background:var(--warning-50); border:1px solid rgba(245,165,36,.3); }
+    .ok   { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--success-600); background:#e8faf0; border:1px solid rgba(23,201,100,.25); }
+    .chk  { margin:8px 0; padding:10px 14px; border-radius:var(--r-md); background:var(--warning-50); border:1px solid rgba(245,165,36,.3); font-size:13px; line-height:1.9; }
+    td.num.bad { background:var(--warning-50); }
 </style>
 </head>
 <body>
@@ -68,15 +72,17 @@
     <div class="disclaimer">
         <strong>⚠ 使用前請先讀</strong>
         <ul>
-            <li><strong>金額取自原文，但版面判讀是程式推論</strong>：科目名稱、欄位名稱與階層都是依 PDF 上的座標推算，務必回對原始 PDF 確認後再引用。</li>
+            <li><strong>金額取自原文，但版面判讀是程式推論</strong>：科目名稱與階層是依 PDF 上的座標推算，務必回對原始 PDF 確認後再引用。</li>
+            <li><strong>欄位名稱</strong>：主要各表的欄位已依央行預算書格式寫死（含跨頁對開的大表）；少數表格式不固定，改依表頭推論，會標示<span class="warn">欄名推論</span>。</li>
+            <li><strong>合計驗算只做「丁、預算明細表」</strong>：依科目編號的前綴階層把子科目加總回母科目比對，容許每個子項 0.5 元的四捨五入尾差。丙節只挑重要科目列示、戊節含應收應付遠匯款等對沖科目，相加本來就不等於母科目，所以不驗。這是提醒不是稽核。</li>
             <li><strong>這份 PDF 的內嵌字型沒有 ToUnicode 對照</strong>：直接複製文字會是亂碼，本工具把 pdf.js 取回的碼位還原成中文。少數敘述段落的標點仍可能殘留，表格數字不受影響。</li>
-            <li><strong>只解析「有科目編號的預算表」</strong>：找不到「編號」欄的頁面（純文字的編列說明、圖表頁）不會出現在結果中。</li>
+            <li><strong>甲、財務摘要與乙、業務計畫及預算概要不解析</strong>：那兩節是敘述與圖表，沒有科目編號欄。</li>
         </ul>
     </div>
 
     <div class="step">
         <h2>上傳預算書 PDF</h2>
-        <p class="step-description">上傳中央銀行年度預算書 PDF（附件一／附件二皆可；主計總處網站下載的是 zip，請先解壓出裡面的 PDF）。自動找出所有有科目編號的預算表——損益預計表、盈虧撥補預計表、現金流量預計表、各類明細表、資產負債預計表、彙計表——依 表名→科目編號 呈現，可篩選與匯出 xlsx。</p>
+        <p class="step-description">上傳中央銀行年度預算書 PDF（附件一合併版／附件二皆可；主計總處網站下載的是 zip，請先解壓出裡面的 PDF）。解析結果依央行預算書的章節與表次排列：<strong>丙、預算主要表</strong>（損益／盈虧撥補／現金流量預計表）→ <strong>丁、預算明細表</strong>（損益明細科目、現金流量明細科目）→ <strong>戊、預算參考表</strong> → <strong>己、附錄</strong>，最後是各科目的<strong>編列說明</strong>。可篩選與匯出 xlsx。</p>
         <div class="controls">
             <label for="fileInput" class="file-label">選擇 PDF 檔案（可多選）</label>
             <input type="file" id="fileInput" accept=".pdf" multiple>
@@ -92,7 +98,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module">
-// pdf.js 4.x：2.10 對這份 PDF 的字型會做額外的字形代換（數字、「折」等字會壞），
 // 4.x 取回的碼位才是乾淨的等距位移。
 import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
@@ -143,13 +148,94 @@ function decoderFor(strs) {
     return legible(decMing(all)) >= legible(decKai(all)) ? decMing : decKai;
 }
 
+
+// ===== 中央銀行預算書規格（本工具專用，不做通用推論）=====
+// 章節與表次依央行預算書目次；解析結果照這個順序呈現。
+const SECTIONS = [
+    { key: '丙', label: '丙、預算主要表', tables: ['損益預計表', '盈虧撥補預計表', '現金流量預計表'] },
+    { key: '丁1', label: '丁、預算明細表　壹、損益明細科目', tables: ['金融保險收入明細表', '營業外收入明細表', '金融保險成本明細表', '業務費用明細表', '管理費用明細表', '營業外費用明細表'] },
+    { key: '丁2', label: '丁、預算明細表　貳、現金流量明細科目', tables: ['固定資產建設改良擴充明細表', '固定資產建設改良擴充資金來源明細表', '固定資產建設改良擴充計畫預期進度明細表', '資產折舊明細表', '資產報廢明細表', '資金轉投資及其盈虧明細表', '資本增減與股額明細表'] },
+    { key: '戊', label: '戊、預算參考表', tables: ['資產負債預計表', '員工人數彙計表', '用人費用彙計表', '各項費用彙計表', '增購及汰舊換新管理用公務車輛明細表', '5年來主要營運項目量值明細表', '會費、補助及捐助與分攤費用彙計表', '會費、捐助與分攤費用彙計表', '媒體政策及業務宣導費彙計表'] },
+    { key: '己', label: '己、附錄', tables: ['一般建築及設備計畫之分年性項目明細表'] },
+];
+const TABLE_NAMES = SECTIONS.flatMap(s => s.tables);
+// 表名 → 章節順序；沒列到的表排在最後
+const TABLE_ORDER = new Map(TABLE_NAMES.map((t, i) => [t, i]));
+const sectionOf = title => SECTIONS.find(s => s.tables.includes(title));
+
+// 欄位規格。每欄是 [欄名, 表頭字樣]；表頭字樣用來在表頭上定位該欄，
+// 所以整欄沒有資料時（例如金融保險成本沒有「固定」）其他欄也不會錯位。
+// 只有欄名（字串）的表示無法用表頭定位，改以「欄數相符」比對。
+// 對不上就退回依表頭推論，並在畫面標示「欄名推論」。
+const 費用明細 = [['前年度決算數', '決算數'], ['上年度預算數', '預算數'],
+    ['本年度預算數合計', '合計'], ['本年度預算數固定', '固定'], ['本年度預算數變動', '變動']];
+const SCHEMAS = {
+    '損益預計表': [['前年度決算數金額', '金額'], ['前年度決算數％', '％'],
+        ['本年度預算數金額', '金額'], ['本年度預算數％', '％'],
+        ['上年度預算數金額', '金額'], ['上年度預算數％', '％'],
+        ['比較增減金額', '金額'], ['比較增減％', '％']],
+    '盈虧撥補預計表': [['本年度預算數', '預算數']],
+    '現金流量預計表': [['本年度預算數', '預算數']],
+    // 表頭「折合率 折合新臺幣」是同一格，無法逐欄定位，所以只給欄名、用欄數比對
+    '金融保險收入明細表': ['新臺幣部分營運量', '新臺幣部分利(費)率', '新臺幣部分營運值',
+        '外幣部分營運量(美金千元)', '外幣部分利(費)率', '外幣部分營運原幣值(美金千元)',
+        '外幣部分折合率', '外幣部分折合新臺幣',
+        '合計營運量', '合計加權平均利(費)率', '合計營運值'],
+    // 這些年度的外幣部分都是空的；若哪一年有值，欄數對不上會自動退回推論
+    '營業外收入明細表': [['新臺幣部分', '部分'], ['合計', '合計']],
+    '金融保險成本明細表': 費用明細,
+    '業務費用明細表': 費用明細,
+    '管理費用明細表': 費用明細,
+    '營業外費用明細表': 費用明細,
+    '資產負債預計表': ['前年度實際數', '本年度預計數', '上年度預計數', '比較增減數'],
+    '5年來主要營運項目量值明細表': ['營運量', '平均利(費)率％', '營運值'],
+};
+
+// ===== 合計驗算 =====
+// 央行科目編號是前綴階層：510301 → 5103014 → 51030146，據此把子科目加總回母科目。
+const toNum = s => { const v = Number(String(s).replace(/[,，()（）%％\s]/g, '')); return Number.isFinite(v) ? v : null; };
+function directChildren(rows, i) {
+    const code = rows[i].code, out = [];
+    for (let j = i + 1; j < rows.length; j++) {
+        const c = rows[j].code;
+        if (c === code || !c.startsWith(code)) break;
+        if (out.length && c.startsWith(out[out.length - 1].code)) continue;   // 孫輩不算
+        out.push(rows[j]);
+    }
+    return out;
+}
+// 只有「丁、預算明細表」的科目階層是完整的，才驗得準：
+//   丙、預算主要表只挑重要科目列示，子項本來就不全；
+//   戊、預算參考表含對沖科目（應收／應付遠匯款、備抵損失），相加也不等於母科目。
+const canCheck = title => (sectionOf(title)?.key || '').startsWith('丁');
+// 回傳不符的項目。％與比率欄不驗（不能相加）；容許 每個子項 0.5 元的四捨五入尾差。
+function checkTotals(table) {
+    const out = [];
+    if (!canCheck(table.title)) return out;
+    for (const col of table.cols) {
+        if (/[％%]|率$/.test(col)) continue;
+        table.rows.forEach((r, i) => {
+            const kids = directChildren(table.rows, i);
+            if (!kids.length) return;
+            const parent = toNum(r.values[col]);
+            if (parent === null) return;
+            const vals = kids.map(k => toNum(k.values[col]));
+            if (vals.some(v => v === null)) return;          // 子項有空白就不驗
+            const sum = vals.reduce((a, b) => a + b, 0);
+            if (Math.abs(sum - parent) > Math.max(1, Math.ceil(kids.length / 2)))
+                out.push({ code: r.code, name: r.name, col, parent, sum, kids: kids.length });
+        });
+    }
+    return out;
+}
+
 // ===== 版面解析 =====
 const isNum = s => /^[（(]?-?[\d,]+(\.\d+)?[%％）)]?$/.test(s) && /\d/.test(s);
-// 列標題欄，不能拿來當數字欄的欄名
-const LABEL = /^(名稱|編號|科目|項目|說明|備註|摘要|科目及營運項目)$/;
 const isCode = s => /^\d{2,10}[A-Z]?$/.test(s);
 const tidy = s => s.replace(/[\s　]+/g, '');
-const NOISE = /^附|^中央銀行|中華民國|^華民國|單位[:：]|^[\d.\-:,]+$|^[!ġ中附]$/;
+const NOISE = /^附|^中央|^中華民國|^華民國|單位[:：]|^[\d.\-:,]+$|^[!ġ中附]$/;
+// 列標題欄，不能拿來當數字欄的欄名
+const LABEL = /^(名稱|編號|科目|項目|說明|備註|摘要|科目及營運項目)$/;
 
 // 科目名稱常被拆成多格（層級首字另成一格、或同位置重疊繪製），相鄰格互為前後綴時去重
 function joinCells(cells) {
@@ -159,14 +245,7 @@ function joinCells(cells) {
 }
 
 // 表名在 PDF 裡常被拆行且字序錯亂（「表量預計流金現」），用字元重疊度比對已知表名還原
-const KNOWN_TABLES = ['損益預計表', '盈虧撥補預計表', '現金流量預計表', '金融保險收入明細表', '營業外收入明細表',
-    '金融保險成本明細表', '業務費用明細表', '管理費用明細表', '營業外費用明細表', '資產負債預計表',
-    '固定資產建設改良擴充明細表', '固定資產建設改良擴充資金來源明細表', '固定資產建設改良擴充計畫預期進度明細表',
-    '資產折舊明細表', '資產報廢明細表', '資金轉投資及其盈虧明細表', '資本增減與股額明細表',
-    '員工人數彙計表', '用人費用彙計表', '各項費用彙計表', '增購及汰舊換新管理用公務車輛明細表',
-    '5年來主要營運項目量值明細表', '會費、補助及捐助與分攤費用彙計表', '會費、捐助與分攤費用彙計表',
-    '媒體政策及業務宣導費彙計表', '一般建築及設備計畫之分年性項目明細表'];
-function matchTitle(raw, list = KNOWN_TABLES) {
+function matchTitle(raw, list) {
     let best = '', score = 0;
     for (const k of list) {
         const left = [...raw]; let hit = 0;
@@ -177,23 +256,6 @@ function matchTitle(raw, list = KNOWN_TABLES) {
     return score >= 0.85 ? best : raw;
 }
 
-// 一頁 → {page, lines:[{y, cells:[{x,w,s}]}]}，依 y 分行、行內依 x 排序
-async function pageLines(doc, p) {
-    const tc = await (await doc.getPage(p)).getTextContent();
-    const byFont = new Map();
-    for (const it of tc.items) { if (!byFont.has(it.fontName)) byFont.set(it.fontName, []); byFont.get(it.fontName).push(it.str); }
-    const dec = new Map([...byFont].map(([f, strs]) => [f, decoderFor(strs)]));
-    const rows = new Map();
-    for (const it of tc.items) {
-        if (!it.str.trim()) continue;
-        const y = Math.round(it.transform[5]);
-        let b = [...rows.keys()].find(k => Math.abs(k - y) < 4);
-        if (b === undefined) { b = y; rows.set(b, []); }
-        rows.get(b).push({ x: it.transform[4], w: it.width, s: dec.get(it.fontName)(it.str) });
-    }
-    return { page: p, lines: [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, c]) => ({ y, cells: c.sort((a, b) => a.x - b.x) })) };
-}
-
 const hasCodeHead = pg => pg.lines.some(l => l.cells.some(c => tidy(c.s) === '編號'));
 const isNoteLayout = pg => pg.lines.some(l => l.cells.some(c => tidy(c.s) === '科目') && l.cells.some(c => /^說/.test(tidy(c.s))));
 const dataYs = pg => pg.lines.filter(l => l.cells.some(c => isCode(c.s)) || l.cells.filter(c => isNum(c.s)).length >= 2).map(l => l.y);
@@ -201,8 +263,8 @@ const dataYs = pg => pg.lines.filter(l => l.cells.some(c => isCode(c.s)) || l.ce
 const isOwnTable = pg => pg.lines.slice(0, 5).some(l => {
     const t = tidy(l.cells.map(c => c.s).join(''));
     if (t.length < 6) return false;
-    const m = matchTitle(t);
-    return KNOWN_TABLES.includes(m) && t.length >= m.length * 0.7;
+    const m = matchTitle(t, TABLE_NAMES);
+    return TABLE_NAMES.includes(m) && t.length >= m.length * 0.7;
 });
 
 // 大表印成左右對開兩頁：右頁沒有「編號」欄，但資料列的 y 與左頁幾乎完全對齊。
@@ -227,7 +289,7 @@ function mergeSpread(pg, nextPg) {
     return { page: pg.page, lines: lines.sort((a, b) => b.y - a.y) };
 }
 
-// 以含「編號」的表頭列切開：其上是表名與欄位標題，其下是資料列
+// 一頁 → 原始列資料。欄位不在這裡算，交給 buildTable 整張表一起算。
 function parsePage(pgIn, nextPg) {
     const spread = isSpread(pgIn, nextPg);
     const pg = spread ? mergeSpread(pgIn, nextPg) : pgIn;
@@ -237,14 +299,27 @@ function parsePage(pgIn, nextPg) {
     const idx = L.map((l, i) => i > h && l.cells.some(c => isCode(c.s)) && l.cells.some(c => !isCode(c.s) && !isNum(c.s) && tidy(c.s)) ? i : -1).filter(i => i >= 0);
     if (idx.length < 2) return null;
     const first = idx[0];
-    // 表頭區＝第一列資料以上（不是「編號」列以上——對開的右頁常有更下面的補充標題列）
+    // 表頭區＝第一列資料以上（不是「編號」列以上——對開右頁常有更下面的補充標題列）
     const head = L.slice(0, first);
     const codeHead = head.flatMap(l => l.cells).filter(c => tidy(c.s) === '編號').map(c => ({ cx: c.x, cw: c.w }))[0];
-    // 跨頁表的表名會被拆到下一頁，合併兩頁頁首後再比對
+    // 「說明」欄裡常夾金額，那不是資料欄。表頭都置中，所以「說明」欄左界取它與同列左鄰
+    // 表頭的中心中點；數字的右緣越過這條線就當成說明文字裡的數字。
+    const noteBound = (() => {
+        for (const l of head) {
+            const cs = l.cells.map(c => ({ c, mid: c.x + c.w / 2 })).sort((a, b) => a.mid - b.mid);
+            const k = cs.findIndex(x => /^說\s*明$/.test(x.c.s.trim()));
+            if (k >= 0) return k > 0 ? (cs[k - 1].mid + cs[k].mid) / 2 : cs[k].c.x;
+        }
+        return Infinity;
+    })();
+    // 同一列的第二個編號也會被當成數字，一併擋掉
+    const isData = c => isNum(c.s) && c.x + c.w <= noteBound
+        && !(c.x >= codeHead.cx - 6 && c.x <= codeHead.cx + codeHead.cw + 6);
+
     const tl = ls => ls.map(l => tidy(l.cells.map(c => c.s).join(''))).filter(s => s && !NOISE.test(s));
     const rawTitle = tl(head).filter(s => /表/.test(s)).join('')
         || tl(head).concat(nextPg ? tl(nextPg.lines.slice(0, 4)) : []).join('');
-    const title = matchTitle(rawTitle);
+    const title = matchTitle(rawTitle, TABLE_NAMES);
     // 表頭列＝表頭區扣掉頁眉與表名列。不能改用「含名稱／編號的那一列」當起點——表頭文字
     // 常是同一個 x 跨多列換行（「正式員」／「額薪資」），名稱列往往不是最上面那一列。
     const titleChars = new Set(title);
@@ -252,11 +327,10 @@ function parsePage(pgIn, nextPg) {
         .filter(l => {
             const t = tidy(l.cells.map(c => c.s).join(''));
             // 表名列判定放寬到八成：表名偶爾夾雜年度數字等不在比對結果裡的字
-            const inTitle = [...t].filter(c => titleChars.has(c)).length;
-            return t && !NOISE.test(t) && inTitle / t.length < 0.8;
+            return t && !NOISE.test(t) && [...t].filter(c => titleChars.has(c)).length / t.length < 0.8;
         })
         // 單一中文字的表頭格幾乎都是被拆開的列標題殘字（「科　目」的「目」），不當欄名
-        .map(l => l.cells.filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)) && !/^[\u4e00-\u9fff]$/.test(tidy(c.s)))
+        .map(l => l.cells.filter(c => !isNum(c.s) && tidy(c.s) && !NOISE.test(tidy(c.s)) && !/^[一-鿿]$/.test(tidy(c.s)))
             .map(c => ({ cx: c.x, cw: c.w, s: tidy(c.s) })))
         .filter(r => r.length);
 
@@ -268,7 +342,7 @@ function parsePage(pgIn, nextPg) {
         return {
             y: L[i].y, code: code.s, name: joinCells(left), note: joinCells(right),
             indent: left.length ? Math.round(Math.max(...left.map(c => c.x))) : 0,
-            nums: cells.filter(c => c !== code && isNum(c.s)).map(c => ({ r: c.x + c.w, s: c.s })),
+            nums: cells.filter(c => c !== code && isData(c)).map(c => ({ r: c.x + c.w, s: c.s })),
         };
     });
     // 只有文字、沒有編號與數字的列 = 上一列名稱（或說明）的續行
@@ -281,32 +355,81 @@ function parsePage(pgIn, nextPg) {
         if (lt && !NOISE.test(lt)) prev.name += lt;
         if (rt && !NOISE.test(rt)) prev.note += rt;
     }
-    // 數字欄位靠右對齊：以右緣分群成欄
+    return { page: pg.page, spread, title, headRows, rows };
+}
+
+// 依表頭字樣在表頭上定位各欄的 x 中心（同樣字樣重複出現時，照左到右依序配對）
+function locateCols(headRows, schema) {
+    if (!schema.every(c => Array.isArray(c))) return null;
+    const cells = headRows.flat().slice().sort((a, b) => a.cx - b.cx);
+    const out = []; let k = 0;
+    for (const [name, headText] of schema) {
+        const i = cells.findIndex((c, idx) => idx >= k && c.s === headText);
+        if (i < 0) return null;
+        out.push({ name, cx: cells[i].cx + cells[i].cw / 2 });
+        k = i + 1;
+    }
+    return out;
+}
+
+// ── 整張表（含所有頁與對開右半）一起算欄位 ──
+// 同一張表的各頁版面完全相同；分頁各算各的會讓「某頁剛好沒資料」的欄整個消失，
+// 也會讓同一欄在不同頁拿到不同名字。
+function buildTable(parts, schema) {
+    const rows = parts.flatMap(p => p.rows);
+    const headRows = parts.flatMap(p => p.headRows);
     const edges = [...new Set(rows.flatMap(r => r.nums.map(n => Math.round(n.r))))].sort((a, b) => a - b);
-    const buckets = [];
+    let buckets = [];
     for (const e of edges) { const b = buckets.at(-1); if (b && e - b.at(-1) <= 8) b.push(e); else buckets.push([e]); }
-    // 欄名：逐「表頭列」取中心最近的那一格，再由上而下串接。群組標題（如「新臺幣部分」）
-    // 是置中的，寬度常比它涵蓋的欄還窄，所以不能用區間包含判斷，只能比距離。
+    const span = b => ({ lo: b[0] - 4, hi: b.at(-1) + 4 });
+    const count = b => { const { lo, hi } = span(b); return rows.reduce((n, r) => n + r.nums.filter(x => x.r >= lo && x.r <= hi).length, 0); };
+
+    let names = null;
+    // (1) 規格有記表頭字樣 → 在表頭上定位，再把每群配到最近的那一欄。
+    //     整欄沒資料時（金融保險成本沒有「固定」）其他欄才不會跟著錯位。
+    const located = schema && locateCols(headRows, schema);
+    if (located) {
+        const got = buckets.map(b => {
+            const c = b.at(-1) - 18;
+            const best = located.reduce((p, q) => Math.abs(q.cx - c) < Math.abs(p.cx - c) ? q : p);
+            return Math.abs(best.cx - c) <= 60 ? best.name : null;
+        });
+        if (got.every(Boolean) && new Set(got).size === got.length) names = got;
+    }
+    // (2) 退而求其次：欄數對得上就照順序套規格名。多出來的只允許丟「值極少」的雜訊群
+    //     （說明裡的數字、被誤認的編號）；丟不掉就整個放棄套規格，欄位一個都不能少。
+    if (!names && schema) {
+        const plain = schema.map(c => Array.isArray(c) ? c[0] : c);
+        let cand = buckets;
+        if (cand.length > plain.length) {
+            const noise = Math.max(2, Math.round(rows.length * 0.03));
+            const kept = cand.filter(b => count(b) > noise);
+            if (kept.length === plain.length) cand = kept;
+        }
+        if (cand.length === plain.length) { buckets = cand; names = plain; }
+    }
+
     const cols = buckets.map((b, i) => {
-        const center = b.at(-1) - 18, parts = [];
+        if (names) return { ...span(b), name: names[i] };
+        const center = b.at(-1) - 18, frags = [];
         for (const row of headRows) {
             const cand = row.filter(x => !LABEL.test(x.s));
             if (!cand.length) continue;
             const best = cand.reduce((p, q) => Math.abs(q.cx + q.cw / 2 - center) < Math.abs(p.cx + p.cw / 2 - center) ? q : p);
             if (Math.abs(best.cx + best.cw / 2 - center) > 90) continue;
-            if (!parts.some(x => x.includes(best.s) || best.s.includes(x))) parts.push(best.s);
+            if (!frags.some(x => x.includes(best.s) || best.s.includes(x))) frags.push(best.s);
         }
-        return { lo: b[0] - 4, hi: b.at(-1) + 4, name: parts.join('') || ('欄' + (i + 1)) };
+        return { ...span(b), name: frags.join('') || ('欄' + (i + 1)) };
     });
     // 欄名必須唯一：values 以欄名為 key，同名會互相覆蓋掉資料
     const used = new Map();
-    for (const c of cols) {
-        const n = (used.get(c.name) || 0) + 1;
-        used.set(c.name, n);
-        if (n > 1) c.name += '(' + n + ')';
-    }
+    for (const c of cols) { const n = (used.get(c.name) || 0) + 1; used.set(c.name, n); if (n > 1) c.name += '(' + n + ')'; }
+
     return {
-        page: pg.page, title, spread, cols: cols.map(c => c.name),
+        title: parts[0].title,
+        pages: parts.map(p => p.spread ? `${p.page}-${p.page + 1}` : String(p.page)),
+        cols: cols.map(c => c.name),
+        schemaMatched: !!names,
         rows: rows.map(r => {
             const values = {};
             for (const n of r.nums) { const c = cols.find(c => n.r >= c.lo && n.r <= c.hi); if (c) values[c.name] = n.s; }
@@ -314,6 +437,24 @@ function parsePage(pgIn, nextPg) {
         }),
     };
 }
+
+// 一頁 → {page, lines:[{y, cells:[{x,w,s}]}]}，依 y 分行、行內依 x 排序
+async function pageLines(doc, p) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    const byFont = new Map();
+    for (const it of tc.items) { if (!byFont.has(it.fontName)) byFont.set(it.fontName, []); byFont.get(it.fontName).push(it.str); }
+    const dec = new Map([...byFont].map(([f, strs]) => [f, decoderFor(strs)]));
+    const rows = new Map();
+    for (const it of tc.items) {
+        if (!it.str.trim()) continue;
+        const y = Math.round(it.transform[5]);
+        let b = [...rows.keys()].find(k => Math.abs(k - y) < 4);
+        if (b === undefined) { b = y; rows.set(b, []); }
+        rows.get(b).push({ x: it.transform[4], w: it.width, s: dec.get(it.fontName)(it.str) });
+    }
+    return { page: p, lines: [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, c]) => ({ y, cells: c.sort((a, b) => a.x - b.x) })) };
+}
+
 
 // ===== 編列說明頁（科目｜說明 兩欄式）=====
 // 這些頁沒有「編號」欄，所以不會被上面的預算表解析器撿走。
@@ -397,13 +538,14 @@ function joinNotes(noteGroups, tableGroups) {
     }
 }
 
+
 // ===== 介面 =====
 const $ = id => document.getElementById(id);
 function show(kind, text) {
     for (const k of ['statusMessage', 'errorOutput']) $(k).style.display = 'none';
     $(kind).textContent = text; $(kind).style.display = 'block';
 }
-let parsedTables = [], parsedNotes = [];
+let tables = [], notes = [];
 
 $('fileInput').addEventListener('change', () => {
     const f = $('fileInput').files;
@@ -412,11 +554,11 @@ $('fileInput').addEventListener('change', () => {
 
 async function parseCbPdf() {
     const files = $('fileInput').files;
-    if (!files || !files.length) { show('errorOutput', '請先選擇 PDF 檔案。'); return; }
+    if (!files || !files.length) { show('errorOutput', '請先選擇中央銀行預算書 PDF。'); return; }
     const btn = $('extractBtn');
     btn.disabled = true;
     try {
-        const tables = [], notes = [];
+        const outT = [], outN = [];
         for (const file of files) {
             const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
             const pages = [];
@@ -424,96 +566,134 @@ async function parseCbPdf() {
                 if (p % 10 === 0) show('statusMessage', `解析 ${file.name}：第 ${p}/${doc.numPages} 頁…`);
                 pages.push(await pageLines(doc, p));
             }
+            const groups = new Map();
             let skip = -1;
             for (let i = 0; i < pages.length; i++) {
-                if (i === skip) continue;   // 已併進上一頁的對開右半
+                if (i === skip) continue;                 // 已併進上一頁的對開右半
                 const t = parsePage(pages[i], pages[i + 1]);
-                if (t) { if (t.spread) skip = i + 1; tables.push({ file: file.name, ...t }); continue; }
+                if (t) {
+                    if (t.spread) skip = i + 1;
+                    if (!groups.has(t.title)) groups.set(t.title, []);
+                    groups.get(t.title).push(t);
+                    continue;
+                }
                 const n = parseNotePage(pages[i], matchTitle(headText(pages[i]), NOTE_TITLES));
-                if (n) notes.push({ file: file.name, ...n });
+                if (n) outN.push({ file: file.name, ...n });
             }
+            for (const [title, parts] of groups) outT.push({ file: file.name, ...buildTable(parts, SCHEMAS[title]) });
         }
-        parsedTables = tables; parsedNotes = notes;
-        if (!tables.length && !notes.length) { show('errorOutput', '沒有找到預算表或編列說明——請確認上傳的是中央銀行預算書 PDF。'); return; }
+        tables = outT; notes = outN;
+        if (!tables.length && !notes.length) { show('errorOutput', '沒有找到預算表或編列說明——請確認上傳的是中央銀行預算書 PDF（附件一或附件二）。'); return; }
         render();
-        const rows = tables.reduce((n, t) => n + t.rows.length, 0), nrows = notes.reduce((n, t) => n + t.rows.length, 0);
-        show('statusMessage', `完成：預算表 ${tables.length} 頁 / ${rows} 列；編列說明 ${notes.length} 頁 / ${nrows} 列。`);
+        const nr = tables.reduce((n, t) => n + t.rows.length, 0);
+        const bad = tables.reduce((n, t) => n + checkTotals(t).length, 0);
+        show('statusMessage', `完成：${tables.length} 張表、${nr} 列；編列說明 ${notes.length} 頁、${notes.reduce((n, t) => n + t.rows.length, 0)} 列。合計驗算不符 ${bad} 項。`);
     } catch (e) {
         console.error(e); show('errorOutput', '解析失敗：' + e.message);
     } finally { btn.disabled = false; }
 }
 
+// 說明頁同樣可能跨頁，依「檔案＋表名」合併後再接上明細表的編號與金額
+function noteGroups() {
+    const m = new Map();
+    for (const n of notes) {
+        const key = n.file + '｜' + n.title;
+        if (!m.has(key)) m.set(key, { file: n.file, title: n.title, pages: [], rows: [] });
+        const g = m.get(key);
+        g.pages.push(n.page); g.rows.push(...n.rows);
+    }
+    const gs = [...m.values()].sort((a, b) => a.file.localeCompare(b.file));
+    joinNotes(gs, tables);
+    return gs;
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const indentPx = (r, base) => Math.min(6, Math.max(0, Math.round((r.indent - base) / 9))) * 14 + 12;
+
 function render() {
     const box = $('tableContainer');
-    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    // 同名表可能跨多頁，依「檔案＋表名」合併，欄位取各頁聯集
-    const merge = list => {
-        const m = new Map();
-        for (const t of list) {
-            const key = t.file + '｜' + t.title;
-            if (!m.has(key)) m.set(key, { file: t.file, title: t.title, pages: [], cols: [], rows: [] });
-            const g = m.get(key);
-            g.pages.push(t.spread ? `${t.page}-${t.page + 1}` : t.page);
-            for (const c of (t.cols || [])) if (!g.cols.includes(c)) g.cols.push(c);
-            g.rows.push(...t.rows);
-        }
-        return [...m.values()];
-    };
-    const tabs = merge(parsedTables), notes = merge(parsedNotes);
-    joinNotes(notes, tabs);
+    // 依央行預算書的章節與表次排序，同章節內再依檔案
+    const sorted = [...tables].sort((a, b) =>
+        (TABLE_ORDER.get(a.title) ?? 999) - (TABLE_ORDER.get(b.title) ?? 999) || a.file.localeCompare(b.file));
 
-    const indent = (r, base) => Math.min(6, Math.max(0, Math.round((r.indent - base) / 9))) * 14 + 12;
-    const tableBlock = (g, open) => {
-        const base = g.rows[0].indent, hasNote = g.rows.some(r => r.note);
-        return `
-        <details class="tbl"${open ? ' open' : ''}>
-            <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列</span></summary>
-            <div class="scroll">
-            <table><thead><tr><th>科目編號</th><th style="min-width:220px;">科目名稱</th>${g.cols.map(c => `<th>${esc(c)}</th>`).join('')}${hasNote ? '<th style="min-width:200px;">說明</th>' : ''}</tr></thead>
-            <tbody>${g.rows.map(r => `<tr data-k="${esc(r.code + r.name)}"><td>${esc(r.code)}</td><td style="padding-left:${indent(r, base)}px;">${esc(r.name)}</td>${g.cols.map(c => `<td class="num">${esc(r.values[c] || '')}</td>`).join('')}${hasNote ? `<td>${esc(r.note)}</td>` : ''}</tr>`).join('')}</tbody></table>
-            </div>
-        </details>`;
-    };
-    const noteBlock = g => {
-        const base = g.rows[0].indent;
-        return `
-        <details class="tbl">
-            <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列${g.amountCol ? '' : '・未對到明細表'}</span></summary>
-            <div class="scroll">
-            <table><thead><tr><th>科目編號</th><th style="min-width:200px;">科目名稱</th>${g.amountCol ? `<th>${esc(g.amountCol)}</th>` : ''}<th>編列說明</th></tr></thead>
-            <tbody>${g.rows.map(r => `<tr data-k="${esc((r.code || '') + r.name)}"><td>${esc(r.code || '')}</td><td style="padding-left:${indent(r, base)}px;">${esc(r.name)}</td>${g.amountCol ? `<td class="num">${esc(r.amount || '')}</td>` : ''}<td>${esc(r.note)}</td></tr>`).join('')}</tbody></table>
-            </div>
-        </details>`;
-    };
-
-    box.innerHTML = `
+    let html = `
         <div class="controls" style="margin:16px 0;">
-            <input type="text" id="filterInput" placeholder="輸入文字篩選科目名稱／編號…" style="flex:1;min-width:220px;">
+            <input type="text" id="filterInput" placeholder="輸入科目名稱或編號篩選…" style="flex:1;min-width:220px;">
             <button class="btn-success" id="exportBtn">匯出 xlsx</button>
-        </div>`
-        + (tabs.length ? `<h2 style="margin-top:22px;">預算表</h2>` + tabs.map((g, i) => tableBlock(g, i === 0)).join('') : '')
-        + (notes.length ? `<h2 style="margin-top:22px;">編列說明</h2>
-            <p class="step-description">金額欄是依「科目階層路徑」回查對應明細表接上的，對不到就留白；說明原文照登。</p>`
-            + notes.map(noteBlock).join('') : '');
+        </div>`;
+    let lastSection = null;
+    for (const t of sorted) {
+        const sec = sectionOf(t.title);
+        const label = sec ? sec.label : '其他表';
+        if (label !== lastSection) { html += `<h2 style="margin:24px 0 4px;">${esc(label)}</h2>`; lastSection = label; }
+        html += tableBlock(t);
+    }
+    if (notes.length) {
+        html += `<h2 style="margin:24px 0 4px;">編列說明</h2>
+            <p class="step-description">金額欄是依科目階層路徑回查對應明細表接上的，對不到就留白；說明原文照登。</p>`;
+        html += noteGroups().map(noteBlock).join('');
+    }
+    box.innerHTML = html;
 
     $('filterInput').addEventListener('input', e => {
         const q = e.target.value.trim();
         box.querySelectorAll('tbody tr').forEach(tr => { tr.style.display = !q || tr.dataset.k.includes(q) ? '' : 'none'; });
     });
-    $('exportBtn').addEventListener('click', () => {
-        const wb = XLSX.utils.book_new(); const used = new Set();
-        const addSheet = (title, aoa) => {
-            let n = title.slice(0, 28) || '表'; let i = 1;
-            while (used.has(n)) n = title.slice(0, 25) + '_' + (++i);
-            used.add(n);
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), n);
-        };
-        for (const g of tabs) addSheet(g.title,
-            [['科目編號', '科目名稱', ...g.cols, '說明'], ...g.rows.map(r => [r.code, r.name, ...g.cols.map(c => r.values[c] || ''), r.note])]);
-        for (const g of notes) addSheet(g.title,
-            [['科目編號', '科目名稱', g.amountCol || '金額', '編列說明'], ...g.rows.map(r => [r.code || '', r.name, r.amount || '', r.note])]);
-        XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
-    });
+    $('exportBtn').addEventListener('click', exportXlsx);
+}
+
+function tableBlock(t) {
+    const base = t.rows[0].indent;
+    const bad = checkTotals(t);
+    const badBy = new Map();
+    for (const b of bad) badBy.set(b.code + '|' + b.col, b);
+    const hasNote = t.rows.some(r => r.note);
+    const flag = t.schemaMatched ? '' : '<span class="warn">欄名推論</span>';
+    const chk = !canCheck(t.title) ? ''
+        : bad.length ? `<span class="warn">合計驗算 ${bad.length} 項不符</span>`
+            : `<span class="ok">合計驗算通過</span>`;
+    return `
+    <details class="tbl">
+        <summary>${esc(t.title)}　<span class="meta">${esc(t.file)}・第 ${t.pages.join('、')} 頁・${t.rows.length} 列</span> ${flag} ${chk}</summary>
+        ${bad.length ? `<div class="chk">${bad.slice(0, 20).map(b =>
+            `<div>${esc(b.code)} ${esc(b.name)}　<b>${esc(b.col)}</b>：本列 ${b.parent.toLocaleString()}，${b.kids} 個子科目合計 ${b.sum.toLocaleString()}，差 ${(b.parent - b.sum).toLocaleString()}</div>`).join('')}
+            ${bad.length > 20 ? `<div>…另有 ${bad.length - 20} 項</div>` : ''}</div>` : ''}
+        <div class="scroll">
+        <table><thead><tr><th>科目編號</th><th style="min-width:220px;">科目名稱</th>${t.cols.map(c => `<th>${esc(c)}</th>`).join('')}${hasNote ? '<th style="min-width:200px;">說明</th>' : ''}</tr></thead>
+        <tbody>${t.rows.map(r => `<tr data-k="${esc(r.code + r.name)}"><td>${esc(r.code)}</td><td style="padding-left:${indentPx(r, base)}px;">${esc(r.name)}</td>${t.cols.map(c =>
+            `<td class="num${badBy.has(r.code + '|' + c) ? ' bad' : ''}">${esc(r.values[c] || '')}</td>`).join('')}${hasNote ? `<td>${esc(r.note)}</td>` : ''}</tr>`).join('')}</tbody></table>
+        </div>
+    </details>`;
+}
+
+function noteBlock(g) {
+    const base = g.rows[0].indent;
+    return `
+    <details class="tbl">
+        <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列${g.amountCol ? '' : '・未對到明細表'}</span></summary>
+        <div class="scroll">
+        <table><thead><tr><th>科目編號</th><th style="min-width:200px;">科目名稱</th>${g.amountCol ? `<th>${esc(g.amountCol)}</th>` : ''}<th>編列說明</th></tr></thead>
+        <tbody>${g.rows.map(r => `<tr data-k="${esc((r.code || '') + r.name)}"><td>${esc(r.code || '')}</td><td style="padding-left:${indentPx(r, base)}px;">${esc(r.name)}</td>${g.amountCol ? `<td class="num">${esc(r.amount || '')}</td>` : ''}<td>${esc(r.note)}</td></tr>`).join('')}</tbody></table>
+        </div>
+    </details>`;
+}
+
+function exportXlsx() {
+    const wb = XLSX.utils.book_new(), used = new Set();
+    const add = (title, aoa) => {
+        let n = title.slice(0, 28) || '表', i = 1;
+        while (used.has(n)) n = title.slice(0, 25) + '_' + (++i);
+        used.add(n);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), n);
+    };
+    const sorted = [...tables].sort((a, b) => (TABLE_ORDER.get(a.title) ?? 999) - (TABLE_ORDER.get(b.title) ?? 999));
+    for (const t of sorted) add(t.title,
+        [['科目編號', '科目名稱', ...t.cols, '說明'], ...t.rows.map(r => [r.code, r.name, ...t.cols.map(c => r.values[c] || ''), r.note])]);
+    for (const g of noteGroups()) add(g.title,
+        [['科目編號', '科目名稱', g.amountCol || '金額', '編列說明'], ...g.rows.map(r => [r.code || '', r.name, r.amount || '', r.note])]);
+    const bad = sorted.flatMap(t => checkTotals(t).map(b => [t.file, t.title, b.code, b.name, b.col, b.parent, b.sum, b.parent - b.sum]));
+    if (bad.length) add('合計驗算', [['檔案', '表名', '科目編號', '科目名稱', '欄位', '本列金額', '子科目合計', '差額'], ...bad]);
+    XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
 }
 
 window.parseCbPdf = parseCbPdf;
