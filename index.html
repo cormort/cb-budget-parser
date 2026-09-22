@@ -105,8 +105,16 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 // 落在合法字區較多的那個——實測 4,395 個 item 只有 9 個單字元標點判錯。
 const MING_OFFSETS = [[0x3058, 0x4E00, 0x9FFF], [0x3058, 0xF900, 0xFAFF], [0x8E51, 0xFF00, 0xFFEF], [0x2D1E, 0x3000, 0x303F], [-0x101, 0x20, 0x7E]];
 // 直排標點還原成橫排
-const VERT = { '﹜': '、', '﹝': '、', '﹞': '。', '黆': '、', '︰': '：', '﹐': '，', '﹑': '、', '﹒': '。', '‵': '（' };
-const post = s => s.normalize('NFC').replace(/[︰-﹯黆‵]/g, c => VERT[c] ?? c);
+const VERT = {
+    '\uFE5C': '、', '\uFE5D': '、', '\uFE5E': '。', '\u9EC6': '、',
+    '\uFE30': '：', '\uFE50': '，', '\uFE51': '、', '\uFE52': '。',
+    '\u2035': '（', '\u0287': '－',
+    // 以下是解碼後仍對不回去的殘留，實測在本書中固定代表這些標點
+    '\u2605': '：', '\u201D': '：', '\u339C': '：', '\u201C': '，',
+    '\uFE4B': '「', '\uFE4C': '」', '\u25BD': '（', '\u25BC': '）',
+};
+const VERT_RE = new RegExp('[' + Object.keys(VERT).join('') + ']', 'g');
+const post = s => s.normalize('NFC').replace(VERT_RE, c => VERT[c]);
 
 const big5 = c => {
     const i = c - 436; if (i < 0) return null;
@@ -122,7 +130,18 @@ const decMing = s => post(s.replace(/[Ā-￿]/g, ch => {
 }));
 const decKai = s => post(s.replace(/[Ā-￿]/g, ch => big5(ch.charCodeAt(0)) ?? ch));
 const legible = s => [...s].filter(c => { const n = c.codePointAt(0); return n < 0x100 || (n >= 0x4E00 && n <= 0x9FFF) || (n >= 0x3000 && n <= 0x303F) || (n >= 0xFF00 && n <= 0xFFEF); }).length;
-const decode = s => { if (!/[Ā-￿]/.test(s)) return s; const m = decMing(s), k = decKai(s); return legible(m) >= legible(k) ? m : k; };
+// 亂碼字：楷體落在拉丁擴充／希臘／西里爾等區，明體落在 CJK 擴充 A 區。中文標點不算。
+const GARBLED = /[\u0100-\u2FFF\u3400-\u4DBF]/;
+// 逐「字型」決定要不要解碼、用哪個解碼器。不能逐 item 判斷：有些單字的亂碼剛好落在
+// 正常中文區（例：「說」會變成「婒」），逐 item 看就會被當成正常字放過。同一字型只要
+// 有任何一個 item 帶亂碼字，整個字型就一起解。
+// 另有些年度的 PDF 本來就有 ToUnicode，取回的字是對的，套解碼反而會弄壞——這種只做
+// NFC（那些檔案用的是 CJK 相容表意文字，外觀相同但碼位不同，不正規化連比對都會失效）。
+function decoderFor(strs) {
+    const all = strs.join('');
+    if (!GARBLED.test(all)) return s => s.normalize('NFC');
+    return legible(decMing(all)) >= legible(decKai(all)) ? decMing : decKai;
+}
 
 // ===== 版面解析 =====
 const isNum = s => /^[（(]?-?[\d,]+(\.\d+)?[%％）)]?$/.test(s) && /\d/.test(s);
@@ -145,9 +164,9 @@ const KNOWN_TABLES = ['損益預計表', '盈虧撥補預計表', '現金流量�
     '員工人數彙計表', '用人費用彙計表', '各項費用彙計表', '增購及汰舊換新管理用公務車輛明細表',
     '5年來主要營運項目量值明細表', '會費、補助及捐助與分攤費用彙計表', '會費、捐助與分攤費用彙計表',
     '媒體政策及業務宣導費彙計表', '一般建築及設備計畫之分年性項目明細表'];
-function matchTitle(raw) {
+function matchTitle(raw, list = KNOWN_TABLES) {
     let best = '', score = 0;
-    for (const k of KNOWN_TABLES) {
+    for (const k of list) {
         const left = [...raw]; let hit = 0;
         for (const ch of k) { const i = left.indexOf(ch); if (i >= 0) { left.splice(i, 1); hit++; } }
         const s = hit / k.length;
@@ -159,13 +178,16 @@ function matchTitle(raw) {
 // 一頁 → {page, lines:[{y, cells:[{x,w,s}]}]}，依 y 分行、行內依 x 排序
 async function pageLines(doc, p) {
     const tc = await (await doc.getPage(p)).getTextContent();
+    const byFont = new Map();
+    for (const it of tc.items) { if (!byFont.has(it.fontName)) byFont.set(it.fontName, []); byFont.get(it.fontName).push(it.str); }
+    const dec = new Map([...byFont].map(([f, strs]) => [f, decoderFor(strs)]));
     const rows = new Map();
     for (const it of tc.items) {
         if (!it.str.trim()) continue;
         const y = Math.round(it.transform[5]);
         let b = [...rows.keys()].find(k => Math.abs(k - y) < 4);
         if (b === undefined) { b = y; rows.set(b, []); }
-        rows.get(b).push({ x: it.transform[4], w: it.width, s: decode(it.str) });
+        rows.get(b).push({ x: it.transform[4], w: it.width, s: dec.get(it.fontName)(it.str) });
     }
     return { page: p, lines: [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, c]) => ({ y, cells: c.sort((a, b) => a.x - b.x) })) };
 }
@@ -230,13 +252,95 @@ function parsePage(pg, nextPg) {
     };
 }
 
+// ===== 編列說明頁（科目｜說明 兩欄式）=====
+// 這些頁沒有「編號」欄，所以不會被上面的預算表解析器撿走。
+const NOTE_TITLES = ['損益預計表說明', '金融保險收入說明', '金融保險成本說明', '業務費用說明',
+    '管理費用說明', '營業外收入說明', '營業外費用說明', '資產負債預計表說明'];
+const CJK = /[一-鿿　-〿＀-￯]/;
+
+const headText = pg => pg.lines.slice(0, 4)
+    .map(l => tidy(l.cells.map(c => c.s).join('')))
+    .filter(t => t && !NOISE.test(t)).join('');
+
+function parseNotePage(pg, title) {
+    const L = pg.lines;
+    const h = L.findIndex(l => l.cells.some(c => tidy(c.s) === '科目') && l.cells.some(c => /^說/.test(tidy(c.s))));
+    if (h < 0) return null;
+    const body = L.slice(h + 1).filter(l => l.cells.some(c => tidy(c.s)) && !l.cells.every(c => NOISE.test(tidy(c.s))));
+    if (!body.length) return null;
+    // 說明欄左緣＝各列第二格 x 的最小值（第一格必為科目）
+    const split = Math.min(...body.filter(l => l.cells.length > 1).map(l => l.cells[1].x));
+    if (!isFinite(split)) return null;
+
+    const rows = [];
+    for (const l of body) {
+        const left = [], right = [];
+        for (const c of l.cells) {
+            // 科目與說明偶爾被合併成同一格，跨越分界時以第一個空白切開
+            if (c.x < split - 6 && c.x + c.w > split && /\s/.test(c.s)) {
+                const i = c.s.search(/\s/);
+                left.push(c.s.slice(0, i));
+                right.push({ s: c.s.slice(i + 1), x: split, w: c.x + c.w - split });
+            } else if (c.x < split - 6) left.push(c.s);
+            else right.push(c);
+        }
+        // 同列內格與格之間留有空隙（說明裡夾的小表格）就補空白，否則照中文規則相接
+        let note = '', lastR = -1e9;
+        for (const c of right) {
+            const t = c.s.trim(); if (!t) continue;
+            const gap = note && c.x - lastR > 6;
+            note = !note ? t : note + (gap ? ' ' : (CJK.test(note.slice(-1)) && CJK.test(t[0]) ? '' : ' ')) + t;
+            lastR = c.x + c.w;
+        }
+        const name = tidy(left.join(''));
+        const prev = rows[rows.length - 1];
+        // 只有說明沒有科目 → 上一列說明的續行
+        if (!name) { if (prev && note) prev.note += (CJK.test(prev.note.slice(-1)) && CJK.test(note[0]) ? '' : ' ') + note; continue; }
+        // 科目名稱被斷行：同縮排且沒有說明 → 併回上一列的名稱
+        if (prev && !note && prev.indent === Math.round(l.cells[0].x)) { prev.name += name; continue; }
+        rows.push({ name, indent: Math.round(l.cells[0].x), note });
+    }
+    return { page: pg.page, title, rows };
+}
+
+// 以縮排堆出階層路徑，用來跟明細表對科目
+function levelPaths(rows) {
+    const stack = [];
+    return rows.map(r => {
+        while (stack.length && stack[stack.length - 1].ind >= r.indent) stack.pop();
+        const path = [...stack.map(x => x.name), r.name].join('/');
+        stack.push({ ind: r.indent, name: r.name });
+        return path;
+    });
+}
+
+// 說明表 → 對應的明細表（管理費用說明→管理費用明細表；損益預計表說明→損益預計表）
+const noteTarget = t => { const base = t.replace(/說明$/, ''); return /表$/.test(base) ? base : base + '明細表'; };
+
+// 把說明接回明細表的編號與金額
+function joinNotes(noteGroups, tableGroups) {
+    for (const g of noteGroups) {
+        const tbl = tableGroups.find(t => t.title === noteTarget(g.title) && t.file === g.file);
+        g.amountCol = tbl && (tbl.cols.find(c => /本年度預算數|合計/.test(c)) || tbl.cols[0]);
+        if (!tbl) continue;
+        const index = new Map();
+        levelPaths(tbl.rows).forEach((path, i) => index.set(path, tbl.rows[i]));
+        levelPaths(g.rows).forEach((path, i) => {
+            // 說明頁的階層有時比明細表少一層（明細表多一個總科目），改以「路徑後綴」唯一命中
+            let hit = index.get(path);
+            if (!hit) { const c = [...index].filter(([k]) => k.endsWith('/' + path)); hit = c.length === 1 ? c[0][1] : null; }
+            if (hit) { g.rows[i].code = hit.code; g.rows[i].amount = hit.values[g.amountCol] || ''; }
+        });
+    }
+}
+
 // ===== 介面 =====
 const $ = id => document.getElementById(id);
 function show(kind, text) {
     for (const k of ['statusMessage', 'errorOutput']) $(k).style.display = 'none';
     $(kind).textContent = text; $(kind).style.display = 'block';
 }
-let parsed = [];
+let parsedTables = [], parsedNotes = [];
 
 $('fileInput').addEventListener('change', () => {
     const f = $('fileInput').files;
@@ -249,7 +353,7 @@ async function parseCbPdf() {
     const btn = $('extractBtn');
     btn.disabled = true;
     try {
-        const out = [];
+        const tables = [], notes = [];
         for (const file of files) {
             const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
             const pages = [];
@@ -259,13 +363,16 @@ async function parseCbPdf() {
             }
             for (let i = 0; i < pages.length; i++) {
                 const t = parsePage(pages[i], pages[i + 1]);
-                if (t) out.push({ file: file.name, ...t });
+                if (t) { tables.push({ file: file.name, ...t }); continue; }
+                const n = parseNotePage(pages[i], matchTitle(headText(pages[i]), NOTE_TITLES));
+                if (n) notes.push({ file: file.name, ...n });
             }
         }
-        parsed = out;
-        if (!out.length) { show('errorOutput', '沒有找到含「編號」欄的預算表——請確認上傳的是中央銀行預算書 PDF。'); return; }
+        parsedTables = tables; parsedNotes = notes;
+        if (!tables.length && !notes.length) { show('errorOutput', '沒有找到預算表或編列說明——請確認上傳的是中央銀行預算書 PDF。'); return; }
         render();
-        show('statusMessage', `完成：${out.length} 個表頁、共 ${out.reduce((n, t) => n + t.rows.length, 0)} 列。`);
+        const rows = tables.reduce((n, t) => n + t.rows.length, 0), nrows = notes.reduce((n, t) => n + t.rows.length, 0);
+        show('statusMessage', `完成：預算表 ${tables.length} 頁 / ${rows} 列；編列說明 ${notes.length} 頁 / ${nrows} 列。`);
     } catch (e) {
         console.error(e); show('errorOutput', '解析失敗：' + e.message);
     } finally { btn.disabled = false; }
@@ -273,33 +380,56 @@ async function parseCbPdf() {
 
 function render() {
     const box = $('tableContainer');
-    // 同名表可能跨多頁，依「檔案＋表名」合併，欄位取各頁聯集
-    const groups = new Map();
-    for (const t of parsed) {
-        const key = t.file + '｜' + t.title;
-        if (!groups.has(key)) groups.set(key, { file: t.file, title: t.title, pages: [], cols: [], rows: [] });
-        const g = groups.get(key);
-        g.pages.push(t.page);
-        for (const c of t.cols) if (!g.cols.includes(c)) g.cols.push(c);
-        g.rows.push(...t.rows.map(r => ({ ...r, page: t.page })));
-    }
-    const gs = [...groups.values()];
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    // 同名表可能跨多頁，依「檔案＋表名」合併，欄位取各頁聯集
+    const merge = list => {
+        const m = new Map();
+        for (const t of list) {
+            const key = t.file + '｜' + t.title;
+            if (!m.has(key)) m.set(key, { file: t.file, title: t.title, pages: [], cols: [], rows: [] });
+            const g = m.get(key);
+            g.pages.push(t.page);
+            for (const c of (t.cols || [])) if (!g.cols.includes(c)) g.cols.push(c);
+            g.rows.push(...t.rows);
+        }
+        return [...m.values()];
+    };
+    const tabs = merge(parsedTables), notes = merge(parsedNotes);
+    joinNotes(notes, tabs);
+
+    const indent = (r, base) => Math.min(6, Math.max(0, Math.round((r.indent - base) / 9))) * 14 + 12;
+    const tableBlock = (g, open) => {
+        const base = g.rows[0].indent, hasNote = g.rows.some(r => r.note);
+        return `
+        <details class="tbl"${open ? ' open' : ''}>
+            <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列</span></summary>
+            <div class="scroll">
+            <table><thead><tr><th>科目編號</th><th style="min-width:220px;">科目名稱</th>${g.cols.map(c => `<th>${esc(c)}</th>`).join('')}${hasNote ? '<th style="min-width:200px;">說明</th>' : ''}</tr></thead>
+            <tbody>${g.rows.map(r => `<tr data-k="${esc(r.code + r.name)}"><td>${esc(r.code)}</td><td style="padding-left:${indent(r, base)}px;">${esc(r.name)}</td>${g.cols.map(c => `<td class="num">${esc(r.values[c] || '')}</td>`).join('')}${hasNote ? `<td>${esc(r.note)}</td>` : ''}</tr>`).join('')}</tbody></table>
+            </div>
+        </details>`;
+    };
+    const noteBlock = g => {
+        const base = g.rows[0].indent;
+        return `
+        <details class="tbl">
+            <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列${g.amountCol ? '' : '・未對到明細表'}</span></summary>
+            <div class="scroll">
+            <table><thead><tr><th>科目編號</th><th style="min-width:200px;">科目名稱</th>${g.amountCol ? `<th>${esc(g.amountCol)}</th>` : ''}<th>編列說明</th></tr></thead>
+            <tbody>${g.rows.map(r => `<tr data-k="${esc((r.code || '') + r.name)}"><td>${esc(r.code || '')}</td><td style="padding-left:${indent(r, base)}px;">${esc(r.name)}</td>${g.amountCol ? `<td class="num">${esc(r.amount || '')}</td>` : ''}<td>${esc(r.note)}</td></tr>`).join('')}</tbody></table>
+            </div>
+        </details>`;
+    };
+
     box.innerHTML = `
         <div class="controls" style="margin:16px 0;">
             <input type="text" id="filterInput" placeholder="輸入文字篩選科目名稱／編號…" style="flex:1;min-width:220px;">
             <button class="btn-success" id="exportBtn">匯出 xlsx</button>
-        </div>` + gs.map((g, gi) => {
-        const base = g.rows[0].indent, hasNote = g.rows.some(r => r.note);
-        return `
-        <details class="tbl"${gi === 0 ? ' open' : ''}>
-            <summary>${esc(g.title)}　<span class="meta">${esc(g.file)}・第 ${g.pages.join('、')} 頁・${g.rows.length} 列</span></summary>
-            <div class="scroll">
-            <table><thead><tr><th>科目編號</th><th style="min-width:220px;">科目名稱</th>${g.cols.map(c => `<th>${esc(c)}</th>`).join('')}${hasNote ? '<th style="min-width:200px;">說明</th>' : ''}</tr></thead>
-            <tbody>${g.rows.map(r => `<tr data-k="${esc(r.code + r.name)}"><td>${esc(r.code)}</td><td style="padding-left:${Math.min(6, Math.max(0, Math.round((r.indent - base) / 9))) * 14 + 12}px;">${esc(r.name)}</td>${g.cols.map(c => `<td class="num">${esc(r.values[c] || '')}</td>`).join('')}${hasNote ? `<td>${esc(r.note)}</td>` : ''}</tr>`).join('')}</tbody></table>
-            </div>
-        </details>`;
-    }).join('');
+        </div>`
+        + (tabs.length ? `<h2 style="margin-top:22px;">預算表</h2>` + tabs.map((g, i) => tableBlock(g, i === 0)).join('') : '')
+        + (notes.length ? `<h2 style="margin-top:22px;">編列說明</h2>
+            <p class="step-description">金額欄是依「科目階層路徑」回查對應明細表接上的，對不到就留白；說明原文照登。</p>`
+            + notes.map(noteBlock).join('') : '');
 
     $('filterInput').addEventListener('input', e => {
         const q = e.target.value.trim();
@@ -307,13 +437,16 @@ function render() {
     });
     $('exportBtn').addEventListener('click', () => {
         const wb = XLSX.utils.book_new(); const used = new Set();
-        for (const g of gs) {
-            const aoa = [['科目編號', '科目名稱', ...g.cols, '說明'], ...g.rows.map(r => [r.code, r.name, ...g.cols.map(c => r.values[c] || ''), r.note])];
-            let n = g.title.slice(0, 28) || '表'; let i = 1;
-            while (used.has(n)) n = g.title.slice(0, 26) + '_' + (++i);
+        const addSheet = (title, aoa) => {
+            let n = title.slice(0, 28) || '表'; let i = 1;
+            while (used.has(n)) n = title.slice(0, 25) + '_' + (++i);
             used.add(n);
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), n);
-        }
+        };
+        for (const g of tabs) addSheet(g.title,
+            [['科目編號', '科目名稱', ...g.cols, '說明'], ...g.rows.map(r => [r.code, r.name, ...g.cols.map(c => r.values[c] || ''), r.note])]);
+        for (const g of notes) addSheet(g.title,
+            [['科目編號', '科目名稱', g.amountCol || '金額', '編列說明'], ...g.rows.map(r => [r.code || '', r.name, r.amount || '', r.note])]);
         XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
     });
 }
