@@ -1,0 +1,9 @@
+{
+  "name": "cb-budget-parser",
+  "private": true,
+  "type": "module",
+  "description": "出貨的只有 index.html（純前端單檔，無建置步驟）。這裡只宣告 tools/ 底下驗證工具的相依套件。",
+  "devDependencies": {
+    "pdfjs-dist": "4.10.38"
+  }
+}
