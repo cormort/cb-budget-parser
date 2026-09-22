@@ -71,6 +71,7 @@
     .panel[hidden] { display: none; }
     .panel-head { margin: 14px 0 6px; font-weight: 600; }
     .panel-head .meta { color: var(--fg-500); font-weight: 400; font-size: 13px; }
+    .cell-sub { color: var(--fg-500); font-size: 12px; }
     .scroll { overflow: auto; }
     .warn { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--warning-700); background:var(--warning-50); border:1px solid rgba(245,165,36,.3); }
     .ok   { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--success-600); background:#e8faf0; border:1px solid rgba(23,201,100,.25); }
@@ -493,46 +494,59 @@ function verifyAll() {
 // ===== 表間勾稽 =====
 // 同一個檔案＝同一年度、同一份附件，表與表之間的數字必須對得上。
 // 附件一與附件二是同一份預算的兩種版本，但檔名不一定看得出年度，所以不跨檔案勾稽。
+// 每一筆都記下「哪一張表的哪一個項目」對「哪一張表的哪一個項目」，畫面上才說得清楚。
 function crossChecks(tables) {
     const out = [];
     const T = (file, title) => tables.find(t => t.file === file && t.title === title);
     const totalRow = t => t && t.rows.find(isTotalRow);
-    const val = (t, key, col) => { const r = t && (rowOf(t, key) || totalRow(t)); return r ? toNum(r.values[col] ?? r.values[t.cols[0]]) : null; };
-    const add = (file, rule, detail, a, b) => out.push({ file, rule, detail, left: a, right: b, diff: a - b, ok: Math.abs(a - b) <= 1 });
+    // 取「某張表的某個科目（或合計列）的某個欄位」，連同可讀的標籤一起回傳
+    const side = (t, key, col, extra) => {
+        const r = t && (rowOf(t, key) || totalRow(t));
+        const v = r ? (toNum(r.values[col]) ?? toNum(r.values[t.cols[0]])) : null;
+        return {
+            table: t ? t.title : '（這份文件沒有這張表）',
+            item: (r ? [r.code, r.name].filter(Boolean).join(' ') + '・' : '') + col + (extra || ''),
+            value: v,
+        };
+    };
+    const add = (file, rule, left, right) => out.push({
+        file, rule, left, right,
+        diff: left.value - right.value,
+        ok: Math.abs(left.value - right.value) <= 1,
+        detail: `${left.table} ${left.item} ＝ ${right.table} ${right.item}`,
+    });
+    // 有一邊取不到值就整筆跳過（表不存在、或該欄本來就空白）
+    const cmp = (file, rule, left, right) => { if (left.value != null && right.value != null) add(file, rule, left, right); };
 
     for (const file of [...new Set(tables.map(t => t.file))]) {
         const P = T(file, '損益預計表');
-        const cmp = (rule, detail, a, b) => { if (a === null || b === null || !Number.isFinite(a) || !Number.isFinite(b)) return; add(file, rule, detail, a, b); };
-        const P41 = P && rowOf(P, '4103'), P51 = P && rowOf(P, '5103');
-        const money = '本年度預算數金額';
+        const M = '本年度預算數金額';           // 損益預計表的金額欄
         // 損益預計表的重要科目＝對應明細表的合計
-        cmp('金融保險收入', '損益預計表 4103 = 金融保險收入明細表 合計營運值',
-            P41 && toNum(P41.values[money]), val(T(file, '金融保險收入明細表'), null, '合計營運值'));
-        cmp('金融保險成本', '損益預計表 5103 = 金融保險成本明細表 總計',
-            P51 && toNum(P51.values[money]), val(T(file, '金融保險成本明細表'), null, '本年度預算數合計'));
+        cmp(file, '金融保險收入',
+            side(P, '4103', M), side(T(file, '金融保險收入明細表'), null, '合計營運值'));
+        cmp(file, '金融保險成本',
+            side(P, '5103', M), side(T(file, '金融保險成本明細表'), null, '本年度預算數合計'));
         for (const [code, title] of [['5202', '業務費用明細表'], ['5203', '管理費用明細表'], ['5998', '營業外費用明細表']])
-            cmp(title.replace('明細表', ''), `損益預計表 ${code} = ${title} 總計`,
-                toNum(rowOf(P, code)?.values[money]), val(T(file, title), null, '本年度預算數合計'));
-        cmp('營業外收入', '損益預計表 4998 = 營業外收入明細表 合計',
-            toNum(rowOf(P, '4998')?.values[money]), val(T(file, '營業外收入明細表'), null, '合計'));
+            cmp(file, title.replace('明細表', ''), side(P, code, M), side(T(file, title), null, '本年度預算數合計'));
+        cmp(file, '營業外收入', side(P, '4998', M), side(T(file, '營業外收入明細表'), null, '合計'));
         // 固定資產三張表的本年度金額必須一致
-        const F = T(file, '固定資產建設改良擴充明細表'), S = T(file, '固定資產建設改良擴充資金來源明細表'), G = T(file, '固定資產建設改良擴充計畫預期進度明細表');
-        if (F && S && G) {
-            const x = val(F, null, '合計'), y = val(S, null, '合計金額'), z = val(G, null, '預算數本年度金額');
-            cmp('固定資產', '擴充明細表 合計 = 資金來源明細表 合計金額', x, y);
-            cmp('固定資產', '擴充明細表 合計 = 預期進度明細表 本年度金額', x, z);
+        const F = T(file, '固定資產建設改良擴充明細表');
+        if (F) {
+            cmp(file, '固定資產',
+                side(F, null, '合計'), side(T(file, '固定資產建設改良擴充資金來源明細表'), null, '合計金額'));
+            cmp(file, '固定資產',
+                side(F, null, '合計'), side(T(file, '固定資產建設改良擴充計畫預期進度明細表'), null, '預算數本年度金額'));
         }
         // 損益 → 盈虧撥補 → 現金流量
         const B = T(file, '盈虧撥補預計表'), C = T(file, '現金流量預計表');
-        const net = rowOf(P, '68') || rowOf(P, '66');
-        cmp('本期淨利', '損益預計表 68 = 盈虧撥補預計表 8101',
-            toNum(net?.values[money]), toNum(rowOf(B, '8101')?.values['本年度預算數']));
-        cmp('稅前淨利', '損益預計表 64 = 現金流量預計表 9001',
-            toNum(rowOf(P, '64')?.values[money]), toNum(rowOf(C, '9001')?.values['本年度預算數']));
-        // 現金流量表的發放股利是流出（負），盈虧撥補表的股（官）息紅利是正數
-        const div = toNum(rowOf(C, '9414')?.values['本年度預算數']);
-        const pay = toNum(rowOf(B, '820101')?.values['本年度預算數']);
-        if (div !== null && pay !== null) add(file, '發放股利', '現金流量預計表 9414 = −盈虧撥補預計表 820101', div, -pay);
+        cmp(file, '本期淨利',
+            side(P, rowOf(P, '68') ? '68' : '66', M), side(B, '8101', '本年度預算數'));
+        cmp(file, '稅前淨利', side(P, '64', M), side(C, '9001', '本年度預算數'));
+        // 現金流量表的發放股利是流出（負），盈虧撥補表的股（官）息紅利是正數，取負號後比
+        const div = side(C, '9414', '本年度預算數');
+        const pay = side(B, '820101', '本年度預算數', '（取負號後）');
+        if (pay.value != null) pay.value = -pay.value;
+        cmp(file, '發放股利', div, pay);
     }
     return out;
 }
@@ -553,7 +567,11 @@ const LABEL = /^(名稱|編號|科目|項目|說明|備註|摘要|科目及營�
 
 // 科目名稱常被拆成多格（層級首字另成一格、或同位置重疊繪製），相鄰格互為前後綴時去重
 function joinCells(cells) {
-    const t = cells.map(c => tidy(c.s)).filter(Boolean);
+    const all = cells.map(c => ({ s: tidy(c.s), x: Math.round(c.x) })).filter(c => c.s);
+    // 同一格被重複繪製（x 與字都相同）只留一個：金融保險收入明細表的合計列在 PDF 裡
+    // 是「合」「合」「計」三格、前兩個同一個 x，不去重會變成「合合計」。
+    const seen = new Set();
+    const t = all.filter(c => { const k = c.x + '|' + c.s; if (seen.has(k)) return false; seen.add(k); return true; }).map(c => c.s);
     const keep = t.filter((s, i) => !t.some((o, j) => j !== i && o.length > s.length && (o.startsWith(s) || o.endsWith(s))));
     return keep.join('').replace(/^[^一-鿿\d]+/, '');
 }
@@ -1089,7 +1107,14 @@ function render() {
     };
     const manyFiles = new Set(tables.map(t => t.file)).size > 1;
     const metaOf = t => (manyFiles ? `${t.file}・` : '') + pageRange(t.pages);
+    // 表間勾稽排在最前面（它不是預算表，是整份文件的檢查結果），但預設顯示第一張表
     const tabs = [];
+    if (v.cross.length) tabs.push({
+        cross: true, name: '表間勾稽',
+        meta: `${v.cross.length} 項・${v.cross.some(c => !c.ok) ? v.cross.filter(c => !c.ok).length + ' 項不符' : '全部相符'}`,
+        mark: v.cross.some(c => !c.ok) ? '⚠' : '',
+        html: crossPanel(v),
+    });
     let lastSection = null;
     for (const t of sorted) {
         const label = sectionOf(t.title)?.label || '其他表';
@@ -1108,14 +1133,16 @@ function render() {
     }
 
     const bar = [], panels = [];
-    let i = -1;
+    // 預設顯示第一張表（不是表間勾稽）。tabs 陣列裡夾著章節分隔項，索引不能用 findIndex 算。
+    let firstTable = -1, i = -1;
     for (const t of tabs) {
         if (t.sep) { bar.push(`<span class="tab-sep">${esc(t.sep)}</span>`); continue; }
         i++;
-        bar.push(`<button class="tab${i ? '' : ' active'}" data-tab="${i}" title="${esc(t.name + '　' + t.meta)}">`
+        if (firstTable < 0 && !t.cross) firstTable = i;
+        bar.push(`<button class="tab${i === firstTable ? ' active' : ''}" data-tab="${i}" title="${esc(t.name + '　' + t.meta)}">`
             + `<span class="name">${esc(t.name)}</span>`
             + `<span class="sub"><span class="meta">${esc(t.meta)}</span>${t.mark ? `<span class="mark">${t.mark}</span>` : ''}</span></button>`);
-        panels.push(`<div class="panel" data-tab="${i}"${i ? ' hidden' : ''}>${t.html}</div>`);
+        panels.push(`<div class="panel" data-tab="${i}"${i === firstTable ? '' : ' hidden'}>${t.html}</div>`);
     }
 
     box.innerHTML = `
@@ -1172,6 +1199,25 @@ function verifyBlock(v) {
         ${v.bad.length ? v.bad.slice(0, 20).map(row).join('') + (v.bad.length > 20 ? `<div>…另有 ${v.bad.length - 20} 項，詳匯出檔的「表內驗算」工作表</div>` : '') : ''}
         ${crossBad.length ? crossBad.slice(0, 10).map(c =>
             `<div>${esc(c.rule)}　${esc(c.detail)}：相差 ${c.diff.toLocaleString()}</div>`).join('') : ''}
+    </div>`;
+}
+
+// 表間勾稽：逐條寫出「哪一張表的哪一個項目」應該等於「哪一張表的哪一個項目」
+function crossPanel(v) {
+    const bad = v.cross.filter(c => !c.ok);
+    const files = [...new Set(v.cross.map(c => c.file))];
+    const manyFiles = files.length > 1;
+    const cells = c => `<td>${esc(c.table)}　<span class="cell-sub">${esc(c.item)}</span></td><td class="num">${c.value.toLocaleString()}</td>`;
+    return `
+    <div class="panel-head">表間勾稽　<span class="meta">共 ${v.cross.length} 項${manyFiles ? `・${files.length} 份文件` : ''}</span> ${bad.length ? `<span class="warn">${bad.length} 項不符</span>` : '<span class="ok">全部相符</span>'}</div>
+    <p class="step-description">同一個檔案＝同一年度、同一份附件。每一列是「兩張不同表格裡的同一筆數字」，應該相等（容許四捨五入尾差 1 千元）。</p>
+    <div class="scroll">
+    <table><thead><tr><th>項目</th>${manyFiles ? '<th>檔案</th>' : ''}<th style="min-width:280px;">左邊（表・科目・欄位）</th><th>金額</th><th style="min-width:280px;">右邊（表・科目・欄位）</th><th>金額</th><th>差額</th><th>結果</th></tr></thead>
+    <tbody>${v.cross.map(c => `<tr data-k="${esc(c.rule + c.left.table + c.left.item + c.right.table + c.right.item)}">
+        <td>${esc(c.rule)}</td>${manyFiles ? `<td>${esc(c.file)}</td>` : ''}${cells(c.left)}${cells(c.right)}
+        <td class="num${c.ok ? '' : ' bad'}">${c.diff.toLocaleString()}</td>
+        <td>${c.ok ? '<span class="ok" style="margin:0;">相符</span>' : '<span class="warn" style="margin:0;">不符</span>'}</td>
+    </tr>`).join('')}</tbody></table>
     </div>`;
 }
 
@@ -1234,10 +1280,11 @@ function exportXlsx() {
     add('驗算彙總', [
         ['項目', '結果'],
         ['表內驗算', `已驗 ${v.checked} 項（散總、表尾合計、恆等式）；不符 ${v.bad.length} 項；${v.unable} 項因數字從缺無法驗`],
-        ['表間勾稽', `共 ${v.cross.length} 項；不符 ${v.cross.filter(c => !c.ok).length} 項`],
-        [],
-        ['檔案', '規則', '關係', '左邊', '右邊', '差額', '結果'],
-        ...v.cross.map(c => [c.file, c.rule, c.detail, c.left, c.right, c.diff, c.ok ? '相符' : '不符'])]);
+        ['表間勾稽', `共 ${v.cross.length} 項；不符 ${v.cross.filter(c => !c.ok).length} 項`]]);
+    add('表間勾稽', [
+        ['項目', '檔案', '左邊（表・科目・欄位）', '左邊金額', '右邊（表・科目・欄位）', '右邊金額', '差額', '結果'],
+        ...v.cross.map(c => [c.rule, c.file, `${c.left.table} ${c.left.item}`, c.left.value,
+            `${c.right.table} ${c.right.item}`, c.right.value, c.diff, c.ok ? '相符' : '不符'])]);
     XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
 }
 
