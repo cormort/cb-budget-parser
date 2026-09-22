@@ -427,7 +427,8 @@ function parsePage(pgIn, nextPg) {
     const noteBound = (() => {
         for (const l of head) {
             const cs = l.cells.map(c => ({ c, mid: c.x + c.w / 2 })).sort((a, b) => a.mid - b.mid);
-            const k = cs.findIndex(x => /^說\s*明$/.test(x.c.s.trim()));
+            // 「說明」兩字常被拆成兩格，只認得到「說」
+            const k = cs.findIndex(x => /^說\s*明?$/.test(x.c.s.trim()));
             if (k >= 0) return k > 0 ? (cs[k - 1].mid + cs[k].mid) / 2 : cs[k].c.x;
         }
         return Infinity;
@@ -484,7 +485,7 @@ function parsePage(pgIn, nextPg) {
     const keep = r => !FOOTNOTE.test(r.name) && (r.code || tidy(r.name).length <= 12);
     const kept = rows.filter(keep);
     if (kept.length < 2) return null;
-    return { page: pg.page, spread, title, headRows, rows: kept };
+    return { page: pg.page, spread, title, headRows, codeX: codeHead.cx, rows: kept };
 }
 
 // 規格要找的表頭字樣若被拆成連續單字（「總」「額」，中間還刻意拉開字距），定向併回來。
@@ -545,8 +546,11 @@ function assignInOrder(centers, cols) {
 // 同一張表的各頁版面完全相同；分頁各算各的會讓「某頁剛好沒資料」的欄整個消失，
 // 也會讓同一欄在不同頁拿到不同名字。
 function buildTable(parts, schema) {
-    const rows = parts.flatMap(p => p.rows);
-    const headRows = parts.flatMap(p => p.headRows);
+    // 單雙頁的裝訂邊不同，同一張表的兩面整頁差 12pt；不校正的話每欄會被拆成兩欄。
+    // 以「編號」欄的 x 當基準把各頁對齊到第一頁。
+    const dx = p => parts[0].codeX - p.codeX;
+    const rows = parts.flatMap(p => p.rows.map(r => dx(p) ? { ...r, indent: r.indent + dx(p), nums: r.nums.map(n => ({ ...n, r: n.r + dx(p) })) } : r));
+    const headRows = parts.flatMap(p => dx(p) ? p.headRows.map(row => row.map(c => ({ ...c, cx: c.cx + dx(p) }))) : p.headRows);
     const edges = [...new Set(rows.flatMap(r => r.nums.map(n => Math.round(n.r))))].sort((a, b) => a - b);
     let buckets = [];
     for (const e of edges) { const b = buckets.at(-1); if (b && e - b.at(-1) <= 8) b.push(e); else buckets.push([e]); }
