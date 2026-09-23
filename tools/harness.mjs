@@ -89,7 +89,7 @@ for (const t of tables) {
 }
 console.log(`\n表內驗算：已驗 ${checked} 項，不符 ${bad} 項，因數字從缺無法驗 ${unable} 項`);
 
-const cross = mod.crossChecks(tables);
+const cross = mod.crossChecks(tables, notes);
 console.log(`\n表間勾稽：${cross.length} 項`);
 for (const c of cross) console.log(`  ${c.ok ? '✓' : '✗'} ${c.rule}｜${c.file}｜${c.detail}｜${c.left.value} vs ${c.right.value} 差 ${c.diff}`);
 

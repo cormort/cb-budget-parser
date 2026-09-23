@@ -15,7 +15,7 @@ const html=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
 fs.writeFileSync(path.join(ROOT,'tools','.bundle.mjs'), html.match(/<script type="module">([\s\S]*?)<\/script>/)[1]
  .replace(/from 'https:\/\/cdnjs[^']*pdf\.min\.mjs'/,"from 'pdfjs-dist/legacy/build/pdf.mjs'")
  .replace(/^.*GlobalWorkerOptions.*$/m,'')
- .concat(`\nexport const api={parseCbPdf,verifyTable,crossChecks,get tables(){return tables;}};\n`));
+ .concat(`\nexport const api={parseCbPdf,verifyTable,crossChecks,get tables(){return tables;},get notes(){return notes;}};\n`));
 const api=(await import(pathToFileURL(path.join(ROOT,'tools','.bundle.mjs')).href+'?t='+Date.now())).api;
 const picked = process.argv.slice(2).length ? process.argv.slice(2)
     : fs.readdirSync(ROOT).filter(f => f.endsWith('.pdf')).sort().slice(-2);
@@ -105,11 +105,28 @@ const t=(name,cond)=>{ console.log(`${cond?'✓':'✗'} ${name}`); cond?pass++:f
   const c=api.crossChecks(ts);
   t('表間：改壞 1101 → 說明欄現金勾稽被抓到', c.some(x=>!x.ok&&x.rule==='說明欄現金'));
 }
+// 7e. 跨年度：兩份樣本是相鄰年度、同一附件時，改壞新年度書的上年度預算數 → 對不上前一年書
+{
+  const ts=clone(); const [a,b]=[find(ts,FILE_A,'損益預計表'),find(ts,FILE_B,'損益預計表')];
+  const P=a&&b?(a.year>b.year?a:b):null;
+  if (P && Math.abs(a.year-b.year)===1) {
+    P.rows.find(x=>x.code==='41').values['上年度預算數金額']='1';
+    t('跨年度：改壞新年度書 41 的上年度預算數 → 被抓到', api.crossChecks(ts).some(x=>!x.ok&&x.rule==='跨年度'&&x.left.item.startsWith('41 ')));
+  } else console.log('－ 跨年度：兩份樣本不是相鄰年度，略過');
+}
+// 7f. 利息說明內嵌表：改壞明細表的 51030146 → 與說明內嵌表合計對不上
+{
+  const ts=clone(); const F=api.notes.find(n=>n.title==='金融保險成本說明')?.file;
+  if (F) {
+    find(ts,F,'金融保險成本明細表').rows.find(x=>x.code==='51030146').values['本年度預算數合計']='1';
+    t('利息說明內嵌表：改壞 51030146 → 被抓到', api.crossChecks(ts,api.notes).some(x=>!x.ok&&x.rule==='利息說明內嵌表'));
+  } else console.log('－ 利息說明內嵌表：樣本沒有金融保險成本說明，略過');
+}
 // 8. 未改動時全數通過（對照組）
 {
   const ts=clone();
   const bad=ts.reduce((n,x)=>n+api.verifyTable(x).bad.length,0);
-  const c=api.crossChecks(ts).filter(x=>!x.ok).length;
+  const c=api.crossChecks(ts,api.notes).filter(x=>!x.ok).length;
   t('對照組：未改動時表內 0 不符、表間 0 不符', bad===0&&c===0);
 }
 console.log(`\n否證結果：${pass} 通過、${fail} 失敗`);
