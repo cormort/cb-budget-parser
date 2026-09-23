@@ -562,6 +562,13 @@ function crossChecks(tables) {
                 value: cash.value != null && bank.value != null ? cash.value + bank.value : null,
             });
         }
+        // 期初／期末約當現金的說明欄會拆出「1.現金 ○○ 千元」，這一項就是資產負債表的 1101 現金
+        for (const [code, col] of [['98', '上年度預計數'], ['99', '本年度預計數']]) {
+            const r = C && rowOf(C, code), m = r && r.note.match(/現金([\d,]+)千元/);
+            cmp(file, '說明欄現金', {
+                table: C && C.title, item: `${code} ${r ? r.name : ''}・說明欄「現金」`, value: m ? toNum(m[1]) : null,
+            }, side(BS, '1101', col));
+        }
         cmp(file, '事業投資',
             side(T(file, '資金轉投資及其盈虧明細表'), null, '投資金額投資淨額'), side(BS, '130301', '本年度預計數'));
         cmp(file, '資本',
@@ -799,12 +806,22 @@ function parsePage(pgIn, nextPg) {
             .flatMap(splitHeadCell))
         .filter(r => r.length);
     mergeStacked(headRows);
+    // 說明欄裡的數字也是說明文字（現金流量表 98／99 的「1.現金 171,412 千元」要拿來勾稽）。
+    // 收的條件：整格在 noteBound 右邊，或排在同列說明文字開頭之後——說明開頭＝最右一個資料欄
+    // 表頭右緣以右的第一個文字格。跨在界線上、前面沒有說明文字的是資料欄被界線切到（公務車輛
+    // 明細表的合計金額），不收，免得混進說明。
+    const headRight = Math.max(...headRows.flat().filter(c => c.cx + c.cw / 2 < noteBound).map(c => c.cx + c.cw));
+    const inNote = (c, cells) => {
+        if (!isNum(c.s) || c.x >= noteBound) return true;
+        if (isData(c)) return false;
+        return c.x >= Math.min(...cells.filter(d => !isNum(d.s) && tidy(d.s) && d.x >= headRight).map(d => d.x));
+    };
 
     const rows = idx.map(i => {
         const cells = L[i].cells;
         const code = codeOf(cells);
         const left = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x < codeHead.cx);
-        const right = cells.filter(c => c !== code && !isNum(c.s) && tidy(c.s) && c.x > codeHead.cx + codeHead.cw);
+        const right = cells.filter(c => c !== code && tidy(c.s) && c.x > codeHead.cx + codeHead.cw && inNote(c, cells));
         return {
             y: L[i].y, code: code ? code.s : '', name: joinCells(left), note: joinCells(right),
             indent: left.length ? Math.round(Math.max(...left.map(c => c.x))) : 0,
@@ -817,13 +834,14 @@ function parsePage(pgIn, nextPg) {
     });
     // 只有文字、沒有編號與數字的列 = 上一列名稱（或說明）的續行
     for (const l of L.slice(first)) {
-        if (l.cells.some(c => isCode(c.s) || isNum(c.s))) continue;
+        // 數字全落在說明欄內的列也是續行（「2.自存款日起 3 個月內到期之存放銀行業 2,023,088,247 千元」）
+        if (codeOf(l.cells) || l.cells.some(c => !inNote(c, l.cells))) continue;
         // 但註腳不是續行。黏上去會讓科目名稱變長、又帶到全形冒號而被 keep 當成註腳砍掉，
         // 連帶讓整列消失（_a06 現金流量預計表的「99 期末現金及約當現金」就是這樣不見的）。
         if (FOOTNOTE.test(tidy(l.cells.map(c => c.s).join('')))) continue;
         const prev = rows.filter(r => r.y > l.y).pop();
         if (!prev || prev.y - l.y >= 28) continue;
-        const lt = joinCells(l.cells.filter(c => c.x < codeHead.cx));
+        const lt = joinCells(l.cells.filter(c => c.x < codeHead.cx && !isNum(c.s)));
         const rt = joinCells(l.cells.filter(c => c.x > codeHead.cx + codeHead.cw));
         if (lt && !NOISE.test(lt)) prev.name += lt;
         if (rt && !NOISE.test(rt)) prev.note += rt;

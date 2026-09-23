@@ -98,6 +98,13 @@ const t=(name,cond)=>{ console.log(`${cond?'✓':'✗'} ${name}`); cond?pass++:f
   const c=api.crossChecks(ts);
   t('表間：改壞 97 → 現金淨增減勾稽被抓到', c.some(x=>!x.ok&&x.rule==='現金淨增減'));
 }
+// 7d. 表間：改壞資產負債表的現金 → 與現金流量表 99 說明欄的「現金」對不上
+{
+  const ts=clone(); const B=find(ts,FILE_B,'資產負債預計表');
+  B.rows.find(x=>x.code==='1101').values['本年度預計數']='1';
+  const c=api.crossChecks(ts);
+  t('表間：改壞 1101 → 說明欄現金勾稽被抓到', c.some(x=>!x.ok&&x.rule==='說明欄現金'));
+}
 // 8. 未改動時全數通過（對照組）
 {
   const ts=clone();
