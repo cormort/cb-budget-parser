@@ -553,13 +553,53 @@ function crossChecks(tables) {
         // 作業基金附屬單位決算應具備書表格式」（附錄參–二）明文要求的勾稽，例如附表 B18
         // 「本表期末投資金額應與平衡表長期股權投資科目期末餘額相符」。
         const BS = T(file, '資產負債預計表');
+        // 現金流量表的「現金及約當現金」＝現金＋3 個月內到期的存放銀行業，資產負債表沒拆出
+        // 3 個月內的部分，所以餘額對不上；但其餘存款兩年一樣，增減數對得上（14 份實測全符）。
+        {
+            const cash = side(BS, '1101', '比較增減數'), bank = side(BS, '110201', '比較增減數');
+            cmp(file, '現金淨增減', side(C, '97', '本年度預算數'), {
+                table: cash.table, item: `${cash.item} ＋ ${bank.item}`,
+                value: cash.value != null && bank.value != null ? cash.value + bank.value : null,
+            });
+        }
         cmp(file, '事業投資',
             side(T(file, '資金轉投資及其盈虧明細表'), null, '投資金額投資淨額'), side(BS, '130301', '本年度預計數'));
         cmp(file, '資本',
             side(T(file, '資本增減與股額明細表'), null, '期末資本額實收資本金額'), side(BS, '31', '本年度預計數'));
+        // 期初＝資產負債預計表的上年度預計數（上年度期末）
+        cmp(file, '期初資本',
+            side(T(file, '資本增減與股額明細表'), null, '期初資本額實收資本'), side(BS, '31', '上年度預計數'));
+        cmp(file, '期初事業投資',
+            side(T(file, '資金轉投資及其盈虧明細表'), null, '投資金額以前年度已投資'), side(BS, '130301', '上年度預計數'));
+        // 事業投資利益＝轉投資明細表各事業的現金股利合計。科目編號附件一是 4106、附件二是 4107。
+        cmp(file, '事業投資利益', side(P, rowOf(P, '4106') ? '4106' : '4107', M),
+            side(T(file, '資金轉投資及其盈虧明細表'), null, '現金股利或事業投資利益本年度預算總額'));
+        // 以下由「跨表找相同金額」掃出、14 份逐年成立的關係（tools 外的一次性掃描，見 README）
+        // 信託投資利益不領回，滾入長期信託投資
+        cmp(file, '信託投資利益', side(P, '410355', M), side(BS, '130401', '比較增減數'));
+        cmp(file, '匯率影響數', side(P, '410353', M), side(C, '96', '本年度預算數'));
+        cmp(file, '流動金融負債', side(C, '9402', '本年度預算數'), side(BS, '2109', '比較增減數'));
+        cmp(file, '存入保證金', side(C, '9407', '本年度預算數'), side(BS, '289701', '比較增減數'));
         // 盈餘的分配與保留：分配給中央政府的記在資產負債表的負債，留存事業機關的進保留盈餘
         cmp(file, '盈餘保留', side(B, '8207', '本年度預算數'), side(BS, '3301', '比較增減數'));
-        cmp(file, '累積盈餘', side(B, '8102', '本年度預算數'), side(BS, '330201', '上年度預計數'));
+        // 期初未分配盈餘＝上年度期末的未指撥保留盈餘
+        cmp(file, '期初未分配盈餘', side(B, '8102', '本年度預算數'), side(BS, '3302', '上年度預計數'));
+        // 期末未分配盈餘＝本年度期末的未指撥保留盈餘。盈虧撥補表沒有「未分配盈餘」這一列，
+        // 由 81 盈餘之部 − 82 分配之部 算出；資產負債表該格全分配時印成空白，
+        // 改用同一列的「上年度預計數＋比較增減數」推回，不把空白當 0。
+        if (B && BS) {
+            const s81 = side(B, '81', '本年度預算數'), s82 = side(B, '82', '本年度預算數');
+            const end = side(BS, '3302', '本年度預計數');
+            if (end.value == null) {
+                const prev = side(BS, '3302', '上年度預計數'), chg = side(BS, '3302', '比較增減數');
+                if (prev.value != null && chg.value != null)
+                    Object.assign(end, { item: end.item + '（上年度預計數＋比較增減數）', value: prev.value + chg.value });
+            }
+            cmp(file, '期末未分配盈餘', {
+                table: s81.table, item: `${s81.item} − ${s82.item}`,
+                value: s81.value != null && s82.value != null ? s81.value - s82.value : null,
+            }, end);
+        }
     }
     return out;
 }

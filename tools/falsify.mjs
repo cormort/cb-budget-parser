@@ -84,6 +84,20 @@ const t=(name,cond)=>{ console.log(`${cond?'✓':'✗'} ${name}`); cond?pass++:f
   const c=api.crossChecks(ts);
   t('表間：改壞 31 資本 → 資本勾稽被抓到', c.some(x=>!x.ok&&x.rule==='資本'));
 }
+// 7b. 表間：盈虧撥補的分配之部少分配 → 期末未分配盈餘與資產負債表 3302 對不上
+{
+  const ts=clone(); const B=find(ts,FILE_B,'盈虧撥補預計表');
+  B.rows.find(x=>x.code==='82').values['本年度預算數']='1';
+  const c=api.crossChecks(ts);
+  t('表間：改壞 82 → 期末未分配盈餘勾稽被抓到', c.some(x=>!x.ok&&x.rule==='期末未分配盈餘'));
+}
+// 7c. 表間：改壞現金流量表的現金淨增減 → 與資產負債表現金＋存放銀行業增減數對不上
+{
+  const ts=clone(); const C=find(ts,FILE_B,'現金流量預計表');
+  C.rows.find(x=>x.code==='97').values['本年度預算數']='1';
+  const c=api.crossChecks(ts);
+  t('表間：改壞 97 → 現金淨增減勾稽被抓到', c.some(x=>!x.ok&&x.rule==='現金淨增減'));
+}
 // 8. 未改動時全數通過（對照組）
 {
   const ts=clone();
