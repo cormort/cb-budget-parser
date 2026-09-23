@@ -73,6 +73,7 @@
     .panel-head .meta { color: var(--fg-500); font-weight: 400; font-size: 13px; }
     .cell-sub { color: var(--fg-500); font-size: 12px; }
     .scroll { overflow: auto; }
+    .muted-pill { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--fg-500); background:var(--default-100); }
     .warn { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--warning-700); background:var(--warning-50); border:1px solid rgba(245,165,36,.3); }
     .ok   { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:500; color:var(--success-600); background:#e8faf0; border:1px solid rgba(23,201,100,.25); }
     .chk  { margin:8px 0; padding:10px 14px; border-radius:var(--r-md); background:var(--warning-50); border:1px solid rgba(245,165,36,.3); font-size:13px; line-height:1.9; }
@@ -625,7 +626,10 @@ function crossChecks(tables, notes = []) {
     // 資產負債預計表的「上年度預計數」是重新估計的，跟前一年書對不上（實測 1,284 項不符），不比。
     const files = [...new Set(tables.map(t => t.file))].map(file => {
         const P = T(file, '損益預計表');
-        return { file, year: tables.find(t => t.file === file).year, kind: P ? (rowOf(P, '4106') ? 1 : 2) : 0 };
+        const t0 = tables.find(t => t.file === file);
+        // 這份檔案本身的版本只有檔名看得出來（內文沒寫）
+        const ver = /立法院審定|法定/.test(file) ? '法定預算' : /行政院核定|預算案/.test(file) ? '預算案' : null;
+        return { file, year: t0.year, prevBasis: t0.prevBasis, ver, kind: P ? (rowOf(P, '4106') ? 1 : 2) : 0 };
     });
     // ponytail: 明細表只比第一層科目與總計，子科目差異會反映在上層；抵銷掉的差異看不到
     const XYEAR = [['損益預計表', '上年度預算數金額', '本年度預算數金額', true],
@@ -635,6 +639,10 @@ function crossChecks(tables, notes = []) {
     for (const cur of files) {
         const prev = cur.year && cur.kind && files.find(f => f.year === cur.year - 1 && f.kind === cur.kind);
         if (!prev) continue;
+        // 今年書的上年度欄是預算案、手上的去年檔卻是審定版（或反過來）：數字不同是審議造成的，
+        // 標「版本不同」不算不符（115 年度書對 114 審定書 48 項就是這樣）。任一邊看不出版本就照常比。
+        const verDiff = cur.prevBasis && prev.ver && cur.prevBasis !== prev.ver
+            ? `版本不同：${cur.year} 年度書的上年度預算數為${cur.prevBasis}數，${prev.year} 年度檔案為${prev.ver}數` : null;
         for (const [title, pc, cc, all] of XYEAR) {
             const A = T(cur.file, title), B = T(prev.file, title);
             if (!A || !B) continue;
@@ -642,7 +650,9 @@ function crossChecks(tables, notes = []) {
             for (const r of A.rows.filter(r => all || isTotalRow(r) || (/^\d/.test(r.code) && isRoot(A.rows, r)))) {
                 const key = r.code || r.name.trim();
                 if (!rowOf(B, key)) continue;
+                const n = out.length;
                 cmp(cur.file, '跨年度', tag(side(A, key, pc), cur.year), tag(side(B, key, cc), prev.year));
+                if (verDiff && out.length > n && !out[n].ok) Object.assign(out[n], { ok: true, ver: verDiff });
             }
         }
     }
@@ -1147,6 +1157,15 @@ function yearOf(pages) {
     return [...n].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 }
 
+// 損益預計表底下的「註：…上年度預算數為法定預算數／預算案數。」——上年度欄是哪個版本
+function prevBasisOf(pages) {
+    for (const pg of pages) for (const l of pg.lines) {
+        const m = l.cells.map(c => c.s).join('').replace(/\s/g, '').match(/上年度預算數為(法定預算|預算案)數/);
+        if (m) return m[1];
+    }
+    return null;
+}
+
 async function parseCbPdf() {
     const files = $('fileInput').files;
     if (!files || !files.length) { show('errorOutput', '請先選擇中央銀行預算書 PDF。'); return; }
@@ -1175,8 +1194,8 @@ async function parseCbPdf() {
                 const n = parseNotePage(pages[i], matchTitle(headText(pages[i]), NOTE_TITLES));
                 if (n) outN.push({ file: file.name, ...n });
             }
-            const year = yearOf(pages);
-            for (const [title, parts] of groups) outT.push({ file: file.name, year, ...buildTable(parts, SCHEMAS[title]) });
+            const year = yearOf(pages), prevBasis = prevBasisOf(pages);
+            for (const [title, parts] of groups) outT.push({ file: file.name, year, prevBasis, ...buildTable(parts, SCHEMAS[title]) });
         }
         tables = outT; notes = outN;
         if (!tables.length && !notes.length) { show('errorOutput', '沒有找到預算表或編列說明——請確認上傳的是中央銀行預算書 PDF（附件一或附件二）。'); return; }
@@ -1233,7 +1252,7 @@ function render() {
     const tabs = [];
     if (v.cross.length) tabs.push({
         cross: true, name: '表間勾稽',
-        meta: `${v.cross.length} 項・${v.cross.some(c => !c.ok) ? v.cross.filter(c => !c.ok).length + ' 項不符' : '全部相符'}`,
+        meta: `${v.cross.length} 項・${v.cross.some(c => !c.ok) ? v.cross.filter(c => !c.ok).length + ' 項不符' : '全部相符'}${v.cross.some(c => c.ver) ? `・${v.cross.filter(c => c.ver).length} 項版本不同` : ''}`,
         mark: v.cross.some(c => !c.ok) ? '⚠' : '',
         html: crossPanel(v),
     });
@@ -1326,19 +1345,20 @@ function verifyBlock(v) {
 
 // 表間勾稽：逐條寫出「哪一張表的哪一個項目」應該等於「哪一張表的哪一個項目」
 function crossPanel(v) {
-    const bad = v.cross.filter(c => !c.ok);
+    const bad = v.cross.filter(c => !c.ok), ver = v.cross.filter(c => c.ver);
     const files = [...new Set(v.cross.map(c => c.file))];
     const manyFiles = files.length > 1;
     const cells = c => `<td>${esc(c.table)}　<span class="cell-sub">${esc(c.item)}</span></td><td class="num">${c.value.toLocaleString()}</td>`;
     return `
-    <div class="panel-head">表間勾稽　<span class="meta">共 ${v.cross.length} 項${manyFiles ? `・${files.length} 份文件` : ''}</span> ${bad.length ? `<span class="warn">${bad.length} 項不符</span>` : '<span class="ok">全部相符</span>'}</div>
+    <div class="panel-head">表間勾稽　<span class="meta">共 ${v.cross.length} 項${manyFiles ? `・${files.length} 份文件` : ''}</span> ${bad.length ? `<span class="warn">${bad.length} 項不符</span>` : '<span class="ok">全部相符</span>'}${ver.length ? `<span class="muted-pill">${ver.length} 項版本不同</span>` : ''}</div>
+    ${ver.length ? `<p class="step-description">${esc([...new Set(ver.map(c => c.ver))].join('；'))}，所以不算不符。</p>` : ''}
     <p class="step-description">同一個檔案＝同一年度、同一份附件。每一列是「兩張不同表格裡的同一筆數字」，應該相等（容許四捨五入尾差 1 千元）。「跨年度」是今年書的上年度預算數對去年書的本年度預算數，只在同時上傳相鄰年度時出現。</p>
     <div class="scroll">
     <table><thead><tr><th>項目</th>${manyFiles ? '<th>檔案</th>' : ''}<th style="min-width:280px;">左邊（表・科目・欄位）</th><th>金額</th><th style="min-width:280px;">右邊（表・科目・欄位）</th><th>金額</th><th>差額</th><th>結果</th></tr></thead>
     <tbody>${v.cross.map(c => `<tr data-k="${esc(c.rule + c.left.table + c.left.item + c.right.table + c.right.item)}">
         <td>${esc(c.rule)}</td>${manyFiles ? `<td>${esc(c.file)}</td>` : ''}${cells(c.left)}${cells(c.right)}
         <td class="num${c.ok ? '' : ' bad'}">${c.diff.toLocaleString()}</td>
-        <td>${c.ok ? '<span class="ok" style="margin:0;">相符</span>' : '<span class="warn" style="margin:0;">不符</span>'}</td>
+        <td>${c.ver ? `<span class="muted-pill" style="margin:0;" title="${esc(c.ver)}">版本不同</span>` : c.ok ? '<span class="ok" style="margin:0;">相符</span>' : '<span class="warn" style="margin:0;">不符</span>'}</td>
     </tr>`).join('')}</tbody></table>
     </div>`;
 }
@@ -1406,7 +1426,7 @@ function exportXlsx() {
     add('表間勾稽', [
         ['項目', '檔案', '左邊（表・科目・欄位）', '左邊金額', '右邊（表・科目・欄位）', '右邊金額', '差額', '結果'],
         ...v.cross.map(c => [c.rule, c.file, `${c.left.table} ${c.left.item}`, c.left.value,
-            `${c.right.table} ${c.right.item}`, c.right.value, c.diff, c.ok ? '相符' : '不符'])]);
+            `${c.right.table} ${c.right.item}`, c.right.value, c.diff, c.ver ? '版本不同' : c.ok ? '相符' : '不符'])]);
     XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
 }
 
