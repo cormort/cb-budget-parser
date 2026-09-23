@@ -17,15 +17,16 @@ const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const src = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1]
     .replace(/from 'https:\/\/cdnjs[^']*pdf\.min\.mjs'/, "from 'pdfjs-dist/legacy/build/pdf.mjs'")
     .replace(/^.*GlobalWorkerOptions.*$/m, '')
+    .replace('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/', path.join(ROOT, 'node_modules/pdfjs-dist/cmaps/'))
     .concat(`
-export const api = { pageLines, parsePage, matchTitle, headText, TABLE_NAMES,
+export const api = { pageLines, parsePage, matchTitle, headText, TABLE_NAMES, CMAP,
     get pdfjsLib() { return pdfjsLib; } };
 `);
 fs.writeFileSync(path.join(ROOT, 'tools', '.bundle.mjs'), src);
 const api = (await import(pathToFileURL(path.join(ROOT, 'tools', '.bundle.mjs')).href + '?t=' + Date.now())).api;
 
 const [pdf, pageArg] = process.argv.slice(2);
-const doc = await api.pdfjsLib.getDocument({ data: new Uint8Array(fs.readFileSync(pdf)) }).promise;
+const doc = await api.pdfjsLib.getDocument({ data: new Uint8Array(fs.readFileSync(pdf)), ...api.CMAP }).promise;
 if (pageArg === 'scan') {
     for (let p = 1; p <= doc.numPages; p++) {
         const t = api.parsePage(await api.pageLines(doc, p), await api.pageLines(doc, p + 1));

@@ -36,6 +36,7 @@ if (!m) throw new Error('index.html 找不到 <script type="module">');
 const src = m[1]
     .replace(/from 'https:\/\/cdnjs[^']*pdf\.min\.mjs'/, "from 'pdfjs-dist/legacy/build/pdf.mjs'")
     .replace(/^.*GlobalWorkerOptions.*$/m, '')
+    .replace('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/', path.join(ROOT, 'node_modules/pdfjs-dist/cmaps/'))
     .concat(`
 export const api = {
     parseCbPdf, verifyTable, crossChecks, sectionOf, pageLines, parsePage, matchTitle, headText,
