@@ -1352,6 +1352,9 @@ async function parseCbPdf() {
             for (const [title, parts] of groups) outT.push({ file: file.name, year, prevBasis, ...buildTable(parts, SCHEMAS[title]) });
         }
         tables = outT; notes = outN;
+        // 先把說明接上明細表編號：利息說明內嵌表的勾稽要靠編號 51030146 找說明，
+        // 不先接的話 render() 裡的驗算會比狀態列與匯出檔少一項
+        noteGroups();
         if (!tables.length && !notes.length) { show('errorOutput', '沒有找到預算表或編列說明——請確認上傳的是中央銀行預算書 PDF（附件一或附件二）或審定決算書。'); return; }
         render();
         const nr = tables.reduce((n, t) => n + t.rows.length, 0);
