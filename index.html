@@ -226,14 +226,15 @@ const SCHEMAS = {
     // ── 以下為跨頁對開的大表，左右兩頁合起來算 ──
     // 「不動產、廠房及設備」是最上層科目，一路涵蓋到「租賃權益改良」，「小計」就是它的小計
     //（PDF 註腳：本表《不動產、廠房及設備》之建設、改良、擴充合計 790,831 千元＝小計）。
-    // 「投資性不動產」是另一個科目，與小計相加才是合計。
+    // 「投資性不動產」是另一個科目，與小計相加才是合計。110 年度另有「使用權資產」一欄
+    //（第三個元素 true＝選用欄，其他年度沒有這欄也照樣套規格），也要加進合計。
     '固定資產建設改良擴充明細表': [
         ['不動產、廠房及設備土地', '土地'], ['不動產、廠房及設備土地改良物', '土地改良物'],
         ['不動產、廠房及設備房屋及建築', '房屋及建築'], ['不動產、廠房及設備機械及設備', '機械及設備'],
         ['不動產、廠房及設備交通及運輸設備', '交通及運輸'], ['不動產、廠房及設備什項設備', '什項設備'],
         ['不動產、廠房及設備核能燃料', '核能燃料'], ['不動產、廠房及設備生產性植物', '生產性植物'],
         ['不動產、廠房及設備租賃權益改良', '租賃權益'], ['不動產、廠房及設備小計', '小計'],
-        ['投資性不動產', '投資性'], ['合計', '合計']],
+        ['使用權資產', '使用權', true], ['投資性不動產', '投資性'], ['合計', '合計']],
     '固定資產建設改良擴充資金來源明細表': [
         ['自有資金營運資金', '營運'], ['自有資金出售不適用資產', '出售不適'], ['自有資金增資', '增資'],
         ['自有資金其他', '其他'], ['自有資金小計金額', '金額'], ['自有資金小計％', '％'],
@@ -447,7 +448,8 @@ const COL_RULES = {
     '營業外費用明細表': [['本年度預算數合計', [['本年度預算數固定', 1], ['本年度預算數變動', 1]]]],
     '固定資產建設改良擴充明細表': [
         ['不動產、廠房及設備小計', [[/^不動產、廠房及設備(?!小計)/, 1]]],
-        ['合計', [['不動產、廠房及設備小計', 1], ['投資性不動產', 1]]]],
+        // 使用權資產是選用欄，用規則寫：沒有這欄的年度當 0，不會整列變成「無法驗」
+        ['合計', [['不動產、廠房及設備小計', 1], [/^使用權資產$/, 1], ['投資性不動產', 1]]]],
     '固定資產建設改良擴充資金來源明細表': [['合計金額', [['自有資金小計金額', 1], ['外借資金小計金額', 1]]]],
     '用人費用彙計表': [['合計', [[/./, 1]]]],
     '金融保險收入明細表': [['合計營運值', [['新臺幣部分營運值', 1], ['外幣部分折合新臺幣', 1]]]],
@@ -898,10 +900,19 @@ function splitNumCell(c) {
 }
 
 // 一頁 → 原始列資料。欄位不在這裡算，交給 buildTable 整張表一起算。
+// 表頭的「編號」有時拆成「編」「號」兩格（115 年度附件二的盈虧撥補、固定資產等表），
+// 併回一格才找得到編號欄
+function joinCodeHead(cells) {
+    const i = cells.findIndex((c, k) => tidy(c.s) === '編' && cells[k + 1]
+        && tidy(cells[k + 1].s) === '號' && cells[k + 1].x - (c.x + c.w) < 30);
+    if (i < 0) return cells;
+    const a = cells[i], b = cells[i + 1];
+    return [...cells.slice(0, i), { ...a, s: '編號', w: b.x + b.w - a.x }, ...cells.slice(i + 2)];
+}
 function parsePage(pgIn, nextPg) {
     const spread = isSpread(pgIn, nextPg);
     const pg = spread ? mergeSpread(pgIn, nextPg) : pgIn;
-    const L = pg.lines.map(l => ({ ...l, cells: l.cells.flatMap(splitNumCell) }));
+    const L = pg.lines.map(l => ({ ...l, cells: joinCodeHead(l.cells.flatMap(splitNumCell)) }));
     const h = L.map((l, i) => l.cells.some(c => tidy(c.s) === '編號') ? i : -1).filter(i => i >= 0).pop();
     if (h === undefined) return null;
     const codeHead = L.slice(0, h + 1).flatMap(l => l.cells).filter(c => tidy(c.s) === '編號').map(c => ({ cx: c.x, cw: c.w }))[0];
@@ -1071,10 +1082,11 @@ function locateCols(headRows, schema) {
     if (!schema.every(c => Array.isArray(c))) return null;
     const cells = headRows.flat().slice().sort((a, b) => a.cx - b.cx);
     const out = []; let k = 0;
-    for (const [name, headText] of schema) {
+    for (const [name, headText, optional] of schema) {
         // 表頭字樣偶爾會黏到隔壁欄的一個字（「％」變成「％中」），容許尾巴多一個字
-        const i = cells.findIndex((c, idx) => idx >= k && c.s.startsWith(headText) && c.s.length <= headText.length + 1);
-        if (i < 0) return null;
+        // 選用欄的表頭有時整個印在一格（「使用權資產」）、有時拆成兩行（「使用權」「資產」），只比開頭
+        const i = cells.findIndex((c, idx) => idx >= k && c.s.startsWith(headText) && (optional || c.s.length <= headText.length + 1));
+        if (i < 0) { if (optional) continue; return null; }  // 選用欄：只有部分年度才有
         out.push({ name, cx: cells[i].cx + cells[i].cw / 2 });
         k = i + 1;
     }
