@@ -115,6 +115,10 @@
             <span id="fileNameDisplay" style="color:var(--fg-500);font-size:14px;">尚未選擇檔案</span>
             <button id="extractBtn" class="btn-main" onclick="parseCbPdf()">解析</button>
         </div>
+        <div class="controls" style="margin-top:10px;">
+            <span style="color:var(--fg-500);font-size:13px;">沒有檔案？載入範例：</span>
+            <button class="btn-secondary" onclick="loadSample()">116年度中央銀行預算書（附件二）</button>
+        </div>
     </div>
 
     <div id="statusMessage" class="message status-message" role="status" aria-live="polite"></div>
@@ -1608,7 +1612,26 @@ function exportXlsx() {
     XLSX.writeFile(wb, '中央銀行預算書解析.xlsx');
 }
 
+// 內附範例 PDF：塞進 file input 後跑同一條解析流程
+async function loadSample() {
+    const SAMPLE = { file: 'examples/cb-116-a2.pdf', label: '116年度中央銀行預算書（附件二）' };
+    try {
+        const res = await fetch(SAMPLE.file);
+        if (!res.ok) throw new Error(`下載失敗（HTTP ${res.status}）`);
+        const dt = new DataTransfer();
+        dt.items.add(new File([await res.blob()], SAMPLE.label + '.pdf', { type: 'application/pdf' }));
+        $('fileInput').files = dt.files;
+        $('fileNameDisplay').textContent = `範例：${SAMPLE.label}`;
+        await parseCbPdf();
+    } catch (e) {
+        show('errorOutput', location.protocol === 'file:'
+            ? '載入範例失敗：以 file:// 直接開啟時無法讀取內建範例。請在專案目錄執行 python3 -m http.server 8000，改用 http://localhost:8000/ 開啟（自行選擇 PDF 檔不受影響）。'
+            : '載入範例失敗：' + e.message);
+    }
+}
+
 window.parseCbPdf = parseCbPdf;
+window.loadSample = loadSample;
 
 </script>
 </body>

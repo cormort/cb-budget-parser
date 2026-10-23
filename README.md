@@ -2,7 +2,7 @@
 
 純前端單檔工具，把中央銀行年度預算書 PDF 裡「有科目編號的預算表」抽成可篩選、可匯出 xlsx 的表格。
 
-線上使用：<https://cormort.github.io/cb-budget-parser/>
+線上使用：<https://cormort.github.io/cb-budget-parser/>（可一鍵載入內建範例 `examples/cb-116-a2.pdf`＝116 年度附件二，不必自備檔案）
 
 本工具只為中央銀行預算書而寫，不做通用推論：章節、表次與各表欄位都依央行預算書格式寫死。
 
@@ -261,6 +261,7 @@ item 帶亂碼字，整個字型就一起解。
 
 ```
 npm i                                   # 只裝 tools/ 用的 pdfjs-dist
+npm test                                # 回歸測試：版控中的範例 PDF，解析與驗算結果須與基準一致
 node tools/harness.mjs _a*.pdf          # 跑同一份解析邏輯，列出驗算不符的項目
 node tools/harness.mjs --html out.html _a*.pdf   # 另存畫面成靜態頁
 node tools/falsify.mjs                  # 否證：故意改壞數字，確認驗算真的會叫

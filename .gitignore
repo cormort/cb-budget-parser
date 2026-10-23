@@ -2,6 +2,7 @@
 .claude/settings.local.json
 *.zip
 *.pdf
+!examples/*.pdf
 *.xlsx
 
 # 預算書原始檔（主計總處下載的 zip 與解壓內容），只放本機不進版控

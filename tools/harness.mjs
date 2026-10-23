@@ -95,6 +95,6 @@ console.log(`\n表間勾稽：${cross.length} 項`);
 for (const c of cross) console.log(`  ${c.ver ? '≠' : c.ok ? '✓' : '✗'} ${c.rule}｜${c.file}｜${c.detail}｜${c.left.value} vs ${c.right.value} 差 ${c.diff}`);
 
 if (jsonOut) {
-    fs.writeFileSync(jsonOut, JSON.stringify({ tables, notes, cross }, null, 1));
+    fs.writeFileSync(jsonOut, JSON.stringify({ tables, notes, cross, verify: { checked, bad, unable } }, null, 1));
     console.log(`\n完整結果 → ${jsonOut}`);
 }
