@@ -117,12 +117,19 @@
         </div>
     </div>
 
-    <div id="statusMessage" class="message status-message"></div>
-    <div id="errorOutput" class="message error-message"></div>
+    <div id="statusMessage" class="message status-message" role="status" aria-live="polite"></div>
+    <div id="errorOutput" class="message error-message" role="alert"></div>
     <div id="tableContainer"><p>解析結果將顯示於此處。</p></div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+        integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- ES module 的 import 沒有 integrity 屬性，改用 import map 的 integrity 欄（不支援的瀏覽器會略過）。
+     worker 與 cmaps 是 pdf.js 自己載的，無法加 SRI。 -->
+<script type="importmap">
+{ "integrity": { "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs": "sha384-+0ti2moQlmLN7WZHE2RHIf5lV8hHxhxEalN0il3YZceG26fUPyOkR0hp9daxk1i7" } }
+</script>
 <script type="module">
 // 4.x 取回的碼位才是乾淨的等距位移。
 import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs';
@@ -1336,10 +1343,12 @@ async function parseCbPdf() {
         for (const file of files) {
             const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...CMAP }).promise;
             const pages = [];
-            for (let p = 1; p <= doc.numPages; p++) {
-                if (p % 10 === 0) show('statusMessage', `解析 ${file.name}：第 ${p}/${doc.numPages} 頁…`);
-                pages.push(await pageLines(doc, p));
-            }
+            try {
+                for (let p = 1; p <= doc.numPages; p++) {
+                    if (p % 10 === 0) show('statusMessage', `解析 ${file.name}：第 ${p}/${doc.numPages} 頁…`);
+                    pages.push(await pageLines(doc, p));
+                }
+            } finally { doc.destroy(); }   // 多檔上傳時不釋放，每份 PDF 都會一直占著記憶體與 worker
             const groups = new Map();
             let skip = -1;
             for (let i = 0; i < pages.length; i++) {
